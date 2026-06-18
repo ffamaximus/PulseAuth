@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PulseAuth.EntityFramework</RootNamespace>
+    <AssemblyName>PulseAuth.EntityFramework</AssemblyName>
+
+    <PackageId>PulseAuth.EntityFramework</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>PulseAuth Contributors</Authors>
+    <Description>Entity Framework Core persistent stores for PulseAuth — clients, authorization codes, refresh tokens and grants backed by any EF Core provider.</Description>
+    <PackageTags>oauth2;entityframework;efcore;aspnetcore;authentication</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <LangVersion>latest</LangVersion>
+    <RepositoryType>git</RepositoryType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Nullable>enable</Nullable>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.5" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PulseAuth\PulseAuth.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\icon.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
