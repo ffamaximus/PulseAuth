@@ -16,6 +16,11 @@ public class IdentityUserAuthenticationService<TUser> : IUserAuthenticationServi
     private readonly UserManager<TUser>   _userManager;
     private readonly SignInManager<TUser> _signInManager;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="IdentityUserAuthenticationService{TUser}"/> class with the specified UserManager and SignInManager. The UserManager is used to manage user accounts, retrieve user information, and perform user-related operations, while the SignInManager is used to handle password verification and sign-in operations. This constructor is typically called by dependency injection when you register the service in your application's service container. Make sure to configure ASP.NET Core Identity properly in your application to ensure that the UserManager and SignInManager are available for injection.
+    /// </summary>
+    /// <param name="userManager"></param>
+    /// <param name="signInManager"></param>
     public IdentityUserAuthenticationService(
         UserManager<TUser>   userManager,
         SignInManager<TUser> signInManager)

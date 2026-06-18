@@ -6,7 +6,7 @@ namespace PulseAuth.Abstractions;
 /// <summary>
 /// Validates user credentials and retrieves user profile information.
 /// Implement this interface to connect PulseAuth to your user store.
-/// The default implementation (<see cref="PulseAuth.Identity.IdentityUserAuthenticationService"/>) uses ASP.NET Core Identity.
+/// The default implementation uses ASP.NET Core Identity.
 /// </summary>
 public interface IUserAuthenticationService
 {
