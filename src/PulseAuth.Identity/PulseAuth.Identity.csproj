@@ -1,24 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+    <!-- Unique per package — shared properties come from Directory.Build.props -->
+    <PackageId>PulseAuth.Identity</PackageId>
     <RootNamespace>PulseAuth.Identity</RootNamespace>
     <AssemblyName>PulseAuth.Identity</AssemblyName>
-
-    <PackageId>PulseAuth.Identity</PackageId>
-    <Version>1.0.0</Version>
-    <Authors>PulseAuth Contributors</Authors>
     <Description>ASP.NET Core Identity integration for PulseAuth — connects PulseAuth's user authentication to Identity's UserManager and SignInManager.</Description>
     <PackageTags>oauth2;identity;aspnetcore;authentication</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <LangVersion>latest</LangVersion>
-    <RepositoryType>git</RepositoryType>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <Nullable>enable</Nullable>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageIcon>icon.png</PackageIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,12 +14,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- ProjectReference converts to PackageReference automatically when running dotnet pack -->
     <ProjectReference Include="..\PulseAuth\PulseAuth.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
-    <None Include="..\..\icon.png" Pack="true" PackagePath="\" />
+    <None Include="..\..\icon.png"  Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>

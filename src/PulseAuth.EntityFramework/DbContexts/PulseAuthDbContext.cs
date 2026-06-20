@@ -1,19 +1,39 @@
 using Microsoft.EntityFrameworkCore;
 using PulseAuth.EntityFramework.Entities;
 
-namespace PulseAuth.EntityFramework.DbContext;
+namespace PulseAuth.EntityFramework.DbContexts;
 
 /// <summary>
 /// EF Core DbContext for PulseAuth persistent stores.
-/// Add this to your application's DbContext or use it standalone.
+/// Can be used standalone or inherited by your application's DbContext to consolidate schemas.
 /// </summary>
-public class PulseAuthDbContext : Microsoft.EntityFrameworkCore.DbContext
+/// <example>
+/// Standalone:
+/// <code>
+/// builder.Services.AddPulseAuth(...)
+///     .AddEntityFrameworkStores(opts => opts.UseMySql(cs, version));
+/// </code>
+/// Inherited (single context for your app + PulseAuth tables):
+/// <code>
+/// public class AppDbContext : PulseAuthDbContext
+/// {
+///     public AppDbContext(DbContextOptions&lt;AppDbContext&gt; options) : base(options) { }
+///     // your own DbSets here
+/// }
+/// </code>
+/// </example>
+public class PulseAuthDbContext : DbContext
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="PulseAuthDbContext"/> class with the specified options. This constructor is typically used by EF Core when configuring the DbContext in the application's startup code (e.g., in Program.cs or Startup.cs). The options parameter allows you to specify the database provider (e.g., SQL Server, SQLite) and connection string. For example, you might configure it like this:
-    /// </summary>
-    /// <param name="options"></param>
+    /// <summary>Standalone usage — registered directly via AddEntityFrameworkStores.</summary>
     public PulseAuthDbContext(DbContextOptions<PulseAuthDbContext> options) : base(options) { }
+
+    /// <summary>
+    /// Inheritance constructor — used when a derived context (e.g. AppDbContext) passes its
+    /// own <see cref="DbContextOptions{TContext}"/> up the chain.
+    /// EF Core resolves <c>DbContextOptions&lt;AppDbContext&gt;</c> from DI and passes it here.
+    /// </summary>
+    protected PulseAuthDbContext(DbContextOptions options) : base(options) { }
+
 
     // Clients
     /// <summary>
@@ -63,9 +83,40 @@ public class PulseAuthDbContext : Microsoft.EntityFrameworkCore.DbContext
     {
         base.OnModelCreating(builder);
 
+        // ── Clients ──────────────────────────────────────────────────────────
         builder.Entity<ClientEntity>(e =>
         {
             e.HasIndex(c => c.ClientId).IsUnique();
+
+            e.HasMany(c => c.GrantTypes)
+             .WithOne()
+             .HasForeignKey(x => x.ClientId)
+             .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasMany(c => c.RedirectUris)
+             .WithOne()
+             .HasForeignKey(x => x.ClientId)
+             .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasMany(c => c.PostLogoutUris)
+             .WithOne()
+             .HasForeignKey(x => x.ClientId)
+             .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasMany(c => c.AllowedScopes)
+             .WithOne()
+             .HasForeignKey(x => x.ClientId)
+             .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasMany(c => c.CorsOrigins)
+             .WithOne()
+             .HasForeignKey(x => x.ClientId)
+             .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasMany(c => c.Claims)
+             .WithOne()
+             .HasForeignKey(x => x.ClientId)
+             .OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<ClientGrantTypeEntity>(e =>
@@ -73,27 +124,12 @@ public class PulseAuthDbContext : Microsoft.EntityFrameworkCore.DbContext
             e.HasIndex(x => new { x.ClientId, x.GrantType }).IsUnique();
         });
 
-        builder.Entity<ClientRedirectUriEntity>(e =>
-        {
-        });
-
-        builder.Entity<ClientPostLogoutUriEntity>(e =>
-        {
-        });
-
         builder.Entity<ClientScopeEntity>(e =>
         {
             e.HasIndex(x => new { x.ClientId, x.Scope }).IsUnique();
         });
 
-        builder.Entity<ClientCorsOriginEntity>(e =>
-        {
-        });
-
-        builder.Entity<ClientClaimEntity>(e =>
-        {
-        });
-
+        // ── Persisted grants ─────────────────────────────────────────────────
         builder.Entity<AuthorizationCodeEntity>(e =>
         {
             e.HasIndex(x => x.SubjectId);

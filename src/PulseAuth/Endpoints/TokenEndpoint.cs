@@ -39,11 +39,13 @@ internal static class TokenEndpoint
         var refreshToken  = form["refresh_token"].ToString();
         var username      = form["username"].ToString();
         var password      = form["password"].ToString();
+        // Social token-exchange grants (google_id_token, facebook_access_token, etc.)
+        var externalToken = form["token"].ToString();
 
         var validation = await validator.ValidateAsync(
             grantType, clientId, clientSecret,
             code, codeVerifier, redirectUri, scope,
-            refreshToken, username, password, ct);
+            refreshToken, username, password, externalToken, ct);
 
         if (!validation.IsValid)
             return Results.Json(
@@ -57,9 +59,10 @@ internal static class TokenEndpoint
         // Create access token
         var accessToken = await tokenService.CreateAccessTokenAsync(subject, client.ClientId, scopes, ct: ct);
 
-        // Create ID token (only for authorization_code + openid scope)
+        // Create ID token for any user-facing grant (client_credentials has no user identity).
+        // CreateIdTokenAsync returns null if openid scope is not present, so it's safe to call always.
         string? idToken = null;
-        if (grantType == GrantTypes.AuthorizationCode)
+        if (grantType != GrantTypes.ClientCredentials)
         {
             idToken = await tokenService.CreateIdTokenAsync(
                 subject, client.ClientId, validation.Nonce, scopes, ct: ct);

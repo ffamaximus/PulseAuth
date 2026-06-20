@@ -26,6 +26,18 @@ public static class GrantTypes
     public const string Password          = "password";
 
     /// <summary>
+    /// Google ID Token exchange — present a Google-issued ID token to receive PulseAuth tokens.
+    /// Use this with the Google Sign-In SDK on React/Angular SPAs.
+    /// </summary>
+    public const string GoogleIdToken     = "urn:ietf:params:oauth:grant-type:google_id_token";
+
+    /// <summary>
+    /// Facebook Access Token exchange — present a Facebook access token to receive PulseAuth tokens.
+    /// Use this with the Facebook Login SDK on React/Angular SPAs.
+    /// </summary>
+    public const string FacebookAccessToken = "urn:ietf:params:oauth:grant-type:facebook_access_token";
+
+    /// <summary>
     /// Predefined sets of grant types for common scenarios.
     /// </summary>
     public static IReadOnlyList<string> Code                    => [AuthorizationCode];

@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using PulseAuth.Abstractions;
-using PulseAuth.EntityFramework.DbContext;
+using PulseAuth.EntityFramework.DbContexts;
 using PulseAuth.EntityFramework.Entities;
 using PulseAuth.Models;
 

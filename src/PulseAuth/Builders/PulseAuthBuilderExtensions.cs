@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Authentication.OAuth;
 using Microsoft.Extensions.DependencyInjection;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using PulseAuth.Abstractions;
+using PulseAuth.Services;
 
 namespace PulseAuth.Builders;
 
@@ -192,6 +194,47 @@ public static class PulseAuthBuilderExtensions
 
                 configure?.Invoke(opts);
             });
+        return builder;
+    }
+
+    // ── Social Token Exchange (pure API / SPA SDK flows) ─────────────────────
+
+    /// <summary>
+    /// Enables the <c>urn:ietf:params:oauth:grant-type:google_id_token</c> grant.
+    /// React/Angular SPAs can use the Google Sign-In SDK, obtain a Google ID token,
+    /// and exchange it for PulseAuth tokens via <c>POST /connect/token</c>.
+    /// </summary>
+    /// <param name="builder">The PulseAuth builder.</param>
+    /// <param name="googleClientId">
+    /// The Google OAuth2 client ID (from Google Cloud Console → Credentials).
+    /// Must match the <c>aud</c> claim of the incoming Google ID token.
+    /// </param>
+    public static PulseAuthBuilder AddGoogleTokenExchange(
+        this PulseAuthBuilder builder,
+        string googleClientId)
+    {
+        builder.Services.AddSingleton<IExternalTokenValidator>(
+            _ => new GoogleIdTokenValidator(googleClientId));
+        return builder;
+    }
+
+    /// <summary>
+    /// Enables the <c>urn:ietf:params:oauth:grant-type:facebook_access_token</c> grant.
+    /// React/Angular SPAs can use the Facebook Login SDK, obtain a Facebook access token,
+    /// and exchange it for PulseAuth tokens via <c>POST /connect/token</c>.
+    /// </summary>
+    /// <param name="builder">The PulseAuth builder.</param>
+    /// <param name="appId">Facebook App ID (from developers.facebook.com).</param>
+    /// <param name="appSecret">Facebook App Secret. Used to verify tokens via the debug_token endpoint.</param>
+    public static PulseAuthBuilder AddFacebookTokenExchange(
+        this PulseAuthBuilder builder,
+        string appId,
+        string appSecret)
+    {
+        builder.Services.AddSingleton<IExternalTokenValidator>(
+            sp => new FacebookAccessTokenValidator(
+                appId, appSecret,
+                sp.GetRequiredService<IHttpClientFactory>()));
         return builder;
     }
 

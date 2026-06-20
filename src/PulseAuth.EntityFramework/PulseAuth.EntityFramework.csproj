@@ -1,32 +1,33 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+    <!-- Unique per package — shared properties come from Directory.Build.props -->
+    <PackageId>PulseAuth.EntityFramework</PackageId>
     <RootNamespace>PulseAuth.EntityFramework</RootNamespace>
     <AssemblyName>PulseAuth.EntityFramework</AssemblyName>
-
-    <PackageId>PulseAuth.EntityFramework</PackageId>
-    <Version>1.0.0</Version>
-    <Authors>PulseAuth Contributors</Authors>
     <Description>Entity Framework Core persistent stores for PulseAuth — clients, authorization codes, refresh tokens and grants backed by any EF Core provider.</Description>
     <PackageTags>oauth2;entityframework;efcore;aspnetcore;authentication</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <LangVersion>latest</LangVersion>
-    <RepositoryType>git</RepositoryType>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <Nullable>enable</Nullable>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageIcon>icon.png</PackageIcon>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.5" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.5" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="[8.0.2,)" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="[8.0.1,)" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[8.0.2,)" />
+  </ItemGroup>
+
+  <!-- Design-time only: required by the dotnet-ef CLI tool to recognize the DbContext when
+       scanning this library. PrivateAssets="all" ensures it is NOT published as a dependency.
+       No provider is embedded — run migrations from your startup project:
+         dotnet ef migrations add Init
+           \-\-project src/PulseAuth.EntityFramework
+           \-\-startup-project src/YourApp
+           \-\-context PulseAuthDbContext -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="[8.0.2,)" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
+    <!-- ProjectReference converts to PackageReference automatically when running dotnet pack -->
     <ProjectReference Include="..\PulseAuth\PulseAuth.csproj" />
   </ItemGroup>
 

@@ -1,0 +1,27 @@
+<Project>
+
+  <!--
+    Shared properties for all PulseAuth packages.
+    Bump <Version> here to release all three packages simultaneously.
+    Individual PackageId, Description and PackageTags stay in each .csproj.
+  -->
+
+  <PropertyGroup>
+    <!-- ── Target frameworks ─────────────────────────────────────────────── -->
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- ── NuGet metadata ────────────────────────────────────────────────── -->
+    <Version>1.2.1</Version>
+    <Authors>Andrés Mariño</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/ffamaximus/PulseAuth</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+  </PropertyGroup>
+
+</Project>

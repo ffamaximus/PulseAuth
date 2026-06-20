@@ -53,6 +53,9 @@ public static class ServiceCollectionExtensions
         // HttpContext accessor (needed for endpoints)
         services.AddHttpContextAccessor();
 
+        // HTTP client factory (used by social token validators e.g. Facebook Graph API)
+        services.AddHttpClient();
+
         return new PulseAuthBuilder(services);
     }
 }

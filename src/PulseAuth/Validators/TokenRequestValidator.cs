@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using PulseAuth.Abstractions;
@@ -66,49 +67,40 @@ public class TokenValidationResult
 }
 
 /// <summary>
-/// Validates token endpoint requests (authorization_code, client_credentials, refresh_token).
+/// Validates token endpoint requests for all supported grant types:
+/// authorization_code, client_credentials, refresh_token, password,
+/// and the social token-exchange grants (google_id_token, facebook_access_token).
 /// </summary>
 public class TokenRequestValidator
 {
-    private readonly IClientStore               _clients;
-    private readonly IAuthorizationCodeStore    _codes;
-    private readonly IRefreshTokenStore         _refreshTokens;
-    private readonly IUserAuthenticationService _users;
+    private readonly IClientStore                          _clients;
+    private readonly IAuthorizationCodeStore               _codes;
+    private readonly IRefreshTokenStore                    _refreshTokens;
+    private readonly IUserAuthenticationService            _users;
+    private readonly IReadOnlyList<IExternalTokenValidator> _externalValidators;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="TokenRequestValidator"/> class with the specified client store, authorization code store, refresh token store, and user authentication service. These dependencies are used to validate the various parameters of the token request based on the grant type (e.g., validating client credentials, checking authorization codes, verifying refresh tokens, and authenticating user credentials). The validator will use these services to ensure that the token request is valid and contains all necessary information before proceeding with token issuance or returning an error response to the client.
+    /// Initializes a new instance of the <see cref="TokenRequestValidator"/> class.
     /// </summary>
-    /// <param name="clients"></param>
-    /// <param name="codes"></param>
-    /// <param name="refreshTokens"></param>
-    /// <param name="users"></param>
     public TokenRequestValidator(
         IClientStore clients,
         IAuthorizationCodeStore codes,
         IRefreshTokenStore refreshTokens,
-        IUserAuthenticationService users)
+        IUserAuthenticationService users,
+        IEnumerable<IExternalTokenValidator> externalValidators)
     {
-        _clients       = clients;
-        _codes         = codes;
-        _refreshTokens = refreshTokens;
-        _users         = users;
+        _clients            = clients;
+        _codes              = codes;
+        _refreshTokens      = refreshTokens;
+        _users              = users;
+        _externalValidators = externalValidators.ToList().AsReadOnly();
     }
 
     /// <summary>
-    /// Validates the token request parameters based on the specified grant type and other relevant information. This method checks for the presence of required parameters, validates client credentials, verifies authorization codes and refresh tokens, and authenticates user credentials as needed based on the grant type. The result of the validation is returned as a TokenValidationResult object, which indicates whether the request is valid and contains any relevant information or errors that should be returned to the client. The validation logic is implemented according to the OAuth2 specification and best practices for secure token issuance.
+    /// Validates the token request parameters based on the specified grant type.
+    /// Handles authorization_code, client_credentials, refresh_token, password,
+    /// and any registered social token-exchange grant types.
     /// </summary>
-    /// <param name="grantType"></param>
-    /// <param name="clientId"></param>
-    /// <param name="clientSecret"></param>
-    /// <param name="code"></param>
-    /// <param name="codeVerifier"></param>
-    /// <param name="redirectUri"></param>
-    /// <param name="scope"></param>
-    /// <param name="refreshToken"></param>
-    /// <param name="username"></param>
-    /// <param name="password"></param>
-    /// <param name="ct"></param>
-    /// <returns></returns>
     public async Task<TokenValidationResult> ValidateAsync(
         string? grantType,
         string? clientId,
@@ -120,6 +112,7 @@ public class TokenRequestValidator
         string? refreshToken,
         string? username,
         string? password,
+        string? externalToken,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(grantType))
@@ -142,6 +135,11 @@ public class TokenRequestValidator
 
         if (!client.AllowedGrantTypes.Contains(grantType))
             return TokenValidationResult.Fail(OAuthErrors.UnsupportedGrantType, $"Grant type '{grantType}' is not allowed for this client");
+
+        // Check registered social / external token-exchange validators first
+        var externalValidator = _externalValidators.FirstOrDefault(v => v.SupportedGrantType == grantType);
+        if (externalValidator is not null)
+            return await ValidateSocialTokenAsync(client, externalValidator, externalToken, scope, ct);
 
         return grantType switch
         {
@@ -256,6 +254,58 @@ public class TokenRequestValidator
                                            .ToList();
 
         return TokenValidationResult.Success(client, user.SubjectId, requestedScopes.AsReadOnly());
+    }
+
+    // ── Social Token Exchange ────────────────────────────────────────────────
+
+    private async Task<TokenValidationResult> ValidateSocialTokenAsync(
+        Client client,
+        IExternalTokenValidator validator,
+        string? externalToken,
+        string? scope,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(externalToken))
+            return TokenValidationResult.Fail(OAuthErrors.InvalidRequest, "token is required for social grant types");
+
+        var identity = await validator.ValidateAsync(externalToken, ct);
+        if (identity is null)
+            return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, $"Invalid or expired {validator.ProviderName} token");
+
+        // Find existing user linked to this external provider, or auto-provision a new one
+        var user = await _users.FindByExternalProviderAsync(validator.ProviderName, identity.SubjectId, ct);
+        if (user is null)
+        {
+            var claims = BuildExternalClaims(identity);
+            user = await _users.AutoProvisionUserAsync(validator.ProviderName, identity.SubjectId, claims, ct);
+        }
+
+        var requestedScopes = (scope ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                                           .Where(s => client.AllowedScopes.Contains(s))
+                                           .ToList();
+
+        if (requestedScopes.Count == 0)
+            requestedScopes = client.AllowedScopes
+                                    .Where(s => s != StandardScopes.OfflineAccess)
+                                    .ToList();
+
+        return TokenValidationResult.Success(client, user.SubjectId, requestedScopes.AsReadOnly());
+    }
+
+    private static IEnumerable<Claim> BuildExternalClaims(ExternalIdentity identity)
+    {
+        var claims = new List<Claim>();
+        if (!string.IsNullOrEmpty(identity.Email))
+            claims.Add(new(ClaimTypes.Email,    identity.Email));
+        if (!string.IsNullOrEmpty(identity.Name))
+            claims.Add(new(ClaimTypes.Name,     identity.Name));
+        if (!string.IsNullOrEmpty(identity.GivenName))
+            claims.Add(new(ClaimTypes.GivenName, identity.GivenName));
+        if (!string.IsNullOrEmpty(identity.FamilyName))
+            claims.Add(new(ClaimTypes.Surname,  identity.FamilyName));
+        if (!string.IsNullOrEmpty(identity.Picture))
+            claims.Add(new("picture",           identity.Picture));
+        return claims;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

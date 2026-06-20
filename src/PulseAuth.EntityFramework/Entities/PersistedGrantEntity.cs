@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace PulseAuth.EntityFramework.Entities;
 
@@ -45,6 +46,7 @@ public abstract class PersistedGrantEntity
 /// <summary>
 /// Entity representing an authorization code persisted grant. Inherits common properties from PersistedGrantEntity and adds specific properties for authorization codes, such as CodeChallenge, CodeChallengeMethod, RedirectUri, Nonce, and SessionId. The CodeChallenge and CodeChallengeMethod properties are used to support PKCE (Proof Key for Code Exchange) for enhanced security in public clients. The RedirectUri property is used to validate the redirect URI during the token exchange process. The Nonce property can be used to include a unique value in the authorization request to mitigate replay attacks. The SessionId property can be used to associate the authorization code with a specific user session for additional security and auditing purposes.
 /// </summary>
+[Table("PulseAuth_AuthorizationCodes")]
 public class AuthorizationCodeEntity : PersistedGrantEntity
 {
     /// <summary>
@@ -81,6 +83,7 @@ public class AuthorizationCodeEntity : PersistedGrantEntity
 /// <summary>
 /// Entity representing a refresh token persisted grant. Inherits common properties from PersistedGrantEntity and adds specific properties for refresh tokens, such as PreviousTokenId. The PreviousTokenId property can be used to implement token rotation by linking the current refresh token to the previous one, allowing you to invalidate the previous token when a new one is issued. This helps enhance security by ensuring that if a refresh token is compromised, it cannot be used indefinitely, as it will be invalidated once a new token is issued. The MaxLength attribute ensures that the database column can accommodate typical token identifiers without truncation, while still allowing for a reasonable length to support various formats of token IDs (e.g., random strings, UUIDs).
 /// </summary>
+[Table("PulseAuth_RefreshTokens")]
 public class RefreshTokenEntity : PersistedGrantEntity
 {
     /// <summary>
