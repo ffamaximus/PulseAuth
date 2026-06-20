@@ -1,9 +1,10 @@
 ![PulseAuth Banner](https://raw.githubusercontent.com/ffamaximus/PulseAuth/refs/heads/main/banner.png)
+
 # PulseAuth
 
 **Free, open-source OAuth2 / OpenID Connect authorization server for ASP.NET Core.**
 
-PulseAuth is a lightweight alternative to Duende IdentityServer (formerly IdentityServer4) designed to be accessible, free, and easy to set up. It implements the core OAuth2 and OIDC flows on top of ASP.NET Core minimal APIs and integrates natively with ASP.NET Core Identity.
+PulseAuth is a lightweight alternative to Duende IdentityServer designed to be accessible, free, and easy to set up. It implements the core OAuth2 and OIDC flows on top of ASP.NET Core minimal APIs and integrates natively with ASP.NET Core Identity.
 
 ---
 
@@ -15,6 +16,8 @@ PulseAuth is a lightweight alternative to Duende IdentityServer (formerly Identi
 | `PulseAuth.Identity` | Connects PulseAuth to ASP.NET Core Identity (`UserManager`, `SignInManager`) |
 | `PulseAuth.EntityFramework` | EF Core persistent stores (clients, codes, refresh tokens) |
 
+> Each package targets **net8.0**, **net9.0** and **net10.0**.
+
 ---
 
 ## Supported flows
@@ -22,9 +25,9 @@ PulseAuth is a lightweight alternative to Duende IdentityServer (formerly Identi
 - **Authorization Code + PKCE** — secure for web apps, SPAs and mobile
 - **Client Credentials** — service-to-service authentication
 - **Refresh Token** — with optional rotation
-- **Resource Owner Password** — direct username/password login (ideal for React/Angular SPAs that own their own login UI)
+- **Resource Owner Password** — direct username/password login (ideal for React/Angular SPAs that own their login UI)
 - **Google ID Token exchange** — accept a Google-issued ID token from the frontend SDK and return PulseAuth tokens
-- **Facebook Access Token exchange** — accept a Facebook access token from the frontend SDK and return PulseAuth tokens
+- **Facebook Access Token exchange** — accept a Facebook access token and return PulseAuth tokens
 
 ## OIDC endpoints
 
@@ -42,108 +45,125 @@ PulseAuth is a lightweight alternative to Duende IdentityServer (formerly Identi
 
 ## Quick start
 
-### 1. Install
+### 1. Install packages
 
 ```bash
 dotnet add package PulseAuth
 dotnet add package PulseAuth.Identity
 dotnet add package PulseAuth.EntityFramework
 
-# MariaDB / MySQL provider (recommended: Pomelo)
+# Database provider — Pomelo for MariaDB/MySQL (recommended)
 dotnet add package Pomelo.EntityFrameworkCore.MySql
+
+# Or for SQL Server:
+# dotnet add package Microsoft.EntityFrameworkCore.SqlServer
+
+# EF Core CLI tools (if not already installed)
+dotnet tool install --global dotnet-ef
 ```
+
+> **MariaDB users:** use **Pomelo** (`Pomelo.EntityFrameworkCore.MySql`), not Oracle's `MySql.EntityFrameworkCore`. Oracle's connector has known incompatibilities with MariaDB's `information_schema` that cause runtime errors. See [Troubleshooting](#troubleshooting) for details.
+
+---
 
 ### 2. `appsettings.json`
 
 ```json
 {
   "ConnectionStrings": {
-    "Default": "Server=localhost;Port=3306;Database=myauth;User=root;Password=secret;"
+    "AuthDb": "Server=localhost;Port=3306;Database=myauth;User=root;Password=secret;"
   },
   "PulseAuth": {
     "Issuer": "https://auth.myapp.com"
   },
   "Auth": {
-    "Google":   { "ClientId": "", "ClientSecret": "" },
-    "Facebook": { "AppId":    "", "AppSecret":    "" }
+    "Google":   { "ClientId": "" },
+    "Facebook": { "AppId": "", "AppSecret": "" }
   }
 }
 ```
 
-### 3. Configure `Program.cs`
+---
+
+### 3. Choose a context strategy
+
+PulseAuth supports two patterns for the database context:
+
+#### Option A — Combined context (recommended)
+
+Your application has a single `DbContext` that inherits `PulseAuthDbContext`. This gives you one migration, one connection, and all tables in the same database.
+
+```csharp
+// Infrastructure/Contexts/AppDbContext.cs
+using Microsoft.EntityFrameworkCore;
+using PulseAuth.EntityFramework.DbContexts;
+
+public class AppDbContext : PulseAuthDbContext
+{
+    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+
+    // Add your own DbSets here:
+    public DbSet<Order> Orders { get; set; } = default!;
+}
+```
+
+#### Option B — Standalone context
+
+Use `PulseAuthDbContext` directly with no inheritance. Identity tables and PulseAuth tables live in separate contexts (can be same or different databases).
+
+---
+
+### 4. `Program.cs`
+
+> **Important:** all `builder.Services` calls must come **before** `builder.Build()`.
 
 ```csharp
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using PulseAuth.Builders;
 using PulseAuth.Constants;
+using PulseAuth.EntityFramework.Extensions;
 using PulseAuth.Extensions;
-using PulseAuth.Helpers;
+using PulseAuth.Identity.Extensions;
 using PulseAuth.Models;
 
 var builder = WebApplication.CreateBuilder(args);
-var conn    = builder.Configuration.GetConnectionString("Default")!;
+var conn = builder.Configuration.GetConnectionString("AuthDb")!;
 
-// ── MariaDB server version (auto-detect or pin explicitly) ───────────────────
-var serverVersion = ServerVersion.AutoDetect(conn);
-// Or pin it:  new MariaDbServerVersion(new Version(10, 11));
-
-// ── ASP.NET Core Identity (users & roles) ────────────────────────────────────
+// ── ASP.NET Core Identity ─────────────────────────────────────────────────────
 builder.Services
-    .AddDbContext<ApplicationDbContext>(opts =>
-        opts.UseMySql(conn, serverVersion))
-    .AddIdentity<ApplicationUser, IdentityRole>(opts =>
-    {
-        opts.Password.RequiredLength  = 8;
-        opts.Password.RequireDigit    = true;
-        opts.SignIn.RequireConfirmedAccount = false;
-    })
-    .AddEntityFrameworkStores<ApplicationDbContext>()
+    .AddIdentity<IdentityUser, IdentityRole>()
+    .AddEntityFrameworkStores<AppDbContext>()
     .AddDefaultTokenProviders();
 
 // ── PulseAuth ─────────────────────────────────────────────────────────────────
-var pulse = builder.Services.AddPulseAuth(opts =>
-{
-    opts.Issuer              = builder.Configuration["PulseAuth:Issuer"]!;
-    opts.RotateRefreshTokens = true;
-});
-
-pulse
+builder.Services
+    .AddPulseAuth(opts =>
+    {
+        opts.Issuer = builder.Configuration["PulseAuth:Issuer"]!;
+        opts.RotateRefreshTokens = true;
+    })
     .AddDeveloperSigningCredential()          // swap for persistent key in prod
-    .AddEntityFrameworkStores(opts =>         // clients, codes and tokens in MariaDB
-        opts.UseMySql(conn, serverVersion))
-    .AddIdentityUsers<ApplicationUser>()
-    // ── Social token exchange (pure API — no redirect pages required) ────────
-    .AddGoogleTokenExchange(
-        builder.Configuration["Auth:Google:ClientId"]!)
-    .AddFacebookTokenExchange(
-        builder.Configuration["Auth:Facebook:AppId"]!,
-        builder.Configuration["Auth:Facebook:AppSecret"]!)
-    // ── Clients ──────────────────────────────────────────────────────────────
+    .AddIdentityUsers<IdentityUser>()
+    // Combined context (Option A):
+    .AddEntityFrameworkStores<AppDbContext>(opts =>
+        opts.UseMySql(conn, ServerVersion.AutoDetect(conn)))
+    // Standalone context (Option B):
+    // .AddEntityFrameworkStores(opts =>
+    //     opts.UseMySql(conn, ServerVersion.AutoDetect(conn)))
     .AddInMemoryClients(
     [
-        // React / Angular SPA — password grant + social exchange + refresh
         new Client
         {
-            ClientId           = "my-spa",
-            ClientName         = "My SPA",
-            AllowedGrantTypes  =
-            [
-                GrantTypes.Password,
-                GrantTypes.GoogleIdToken,
-                GrantTypes.FacebookAccessToken,
-                GrantTypes.RefreshToken,
-            ],
+            ClientId          = "my-spa",
+            AllowedGrantTypes = [GrantTypes.Password, GrantTypes.RefreshToken,
+                                  GrantTypes.GoogleIdToken, GrantTypes.FacebookAccessToken],
             AllowOfflineAccess = true,
-            AllowedScopes      = [StandardScopes.OpenId, StandardScopes.Profile,
-                                   StandardScopes.Email, StandardScopes.OfflineAccess, "api"],
+            AllowedScopes      = ["openid", "profile", "email", "offline_access", "api"],
         },
-        // Backend microservice — client credentials
         new Client
         {
             ClientId          = "my-api",
-            ClientName        = "Backend API",
-            ClientSecretHash  = ClientSecretHelper.HashSecret("change-me-in-prod"),
+            ClientSecretHash  = ClientSecretHelper.HashSecret("change-in-prod"),
             AllowedGrantTypes = GrantTypes.ClientCredentialsOnly,
             AllowedScopes     = ["api"],
         },
@@ -158,21 +178,63 @@ app.MapPulseAuth();
 app.Run();
 ```
 
-### 4. Apply migrations
+---
 
-Two contexts: one for Identity, one for PulseAuth stores.
+### 5. Migrations
 
-```bash
-# Identity tables (AspNetUsers, AspNetRoles, etc.)
-dotnet ef migrations add InitIdentity  --context ApplicationDbContext
-dotnet ef database update              --context ApplicationDbContext
+PulseAuth.EntityFramework ships **without** an embedded database provider — migrations are generated from your startup project so the SQL matches your actual provider (MariaDB, SQL Server, PostgreSQL, etc.).
 
-# PulseAuth tables (PulseAuth_Clients, PulseAuth_AuthCodes, etc.)
-dotnet ef migrations add InitPulseAuth --context PulseAuthDbContext
-dotnet ef database update              --context PulseAuthDbContext
+#### 5.1 Create a design-time factory
+
+Add this file to your startup project. It lets `dotnet ef` instantiate the context without booting your full app:
+
+```csharp
+// Infrastructure/Factories/AppDbContextFactory.cs
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Design;
+
+public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
+{
+    public AppDbContext CreateDbContext(string[] args)
+    {
+        // Use a hardcoded dev connection string — AutoDetect requires a live server
+        // and should not be used here.
+        var cs = Environment.GetEnvironmentVariable("DESIGN_CONNECTION")
+                 ?? "Server=localhost;Port=3306;Database=myauth_dev;" +
+                    "User Id=root;Password=secret;";
+
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseMySql(cs, new MariaDbServerVersion(new Version(10, 11, 0)))
+            // For MySQL:    new MySqlServerVersion(new Version(8, 0, 0))
+            // For SQL Server: .UseSqlServer(cs)
+            .Options;
+
+        return new AppDbContext(options);
+    }
+}
 ```
 
-> **Tip:** you can share the same MariaDB database for both contexts; the table prefixes (`AspNet_*` vs `PulseAuth_*`) prevent collisions.
+> **Why `new MariaDbServerVersion(...)` instead of `ServerVersion.AutoDetect`?**
+> `AutoDetect` opens a real connection to detect the version. In design-time (CI, fresh machines) the server may not be available. A hardcoded version avoids this and is safe — it only affects how EF generates the SQL dialect, not the runtime behavior.
+
+#### 5.2 Run migrations
+
+```bash
+# From your startup project directory:
+
+# Option A — combined context (one migration covers all tables)
+dotnet ef migrations add InitApp --context AppDbContext --output-dir Migrations
+dotnet ef database update --context AppDbContext
+
+# Option B — standalone contexts (one migration per context)
+dotnet ef migrations add InitIdentity  --context ApplicationDbContext --output-dir Migrations/Identity
+dotnet ef migrations add InitPulseAuth --context PulseAuthDbContext   --output-dir Migrations/PulseAuth
+
+dotnet ef database update --context ApplicationDbContext
+dotnet ef database update --context PulseAuthDbContext
+```
+
+> **Tip:** with Option A both `AspNet*` and `PulseAuth_*` tables are created in a single pass. The table name prefixes prevent collisions even in the same database.
 
 ---
 
@@ -182,18 +244,149 @@ Never store plaintext secrets. Use the helper:
 
 ```csharp
 var (plain, hash) = ClientSecretHelper.GenerateAndHash();
-Console.WriteLine($"Secret: {plain}");   // share this with the client
-Console.WriteLine($"Hash:   {hash}");    // store this in the DB
+Console.WriteLine($"Secret: {plain}");   // share with the client
+Console.WriteLine($"Hash:   {hash}");    // store in DB / config
 
-// Or hash an existing secret:
+// Or hash an existing value:
 string hash = ClientSecretHelper.HashSecret("my-secret");
 ```
 
 ---
 
+## React / Angular SPA — pure API mode
+
+Keep all UI in the frontend. PulseAuth exposes a REST token endpoint — no Razor pages required.
+
+### Email/password login
+
+```csharp
+// Client config
+new Client
+{
+    ClientId          = "my-spa",
+    AllowedGrantTypes = [GrantTypes.Password, GrantTypes.RefreshToken],
+    AllowOfflineAccess = true,
+    AllowedScopes     = ["openid", "profile", "email", "offline_access", "api"],
+}
+```
+
+```typescript
+// React / TypeScript
+const res = await fetch('https://auth.myapp.com/connect/token', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams({
+    grant_type: 'password',
+    client_id:  'my-spa',
+    username:   email,
+    password:   password,
+    scope:      'openid profile email offline_access api',
+  }),
+});
+const { access_token, refresh_token, id_token } = await res.json();
+```
+
+### Google Sign-In (ID token exchange)
+
+```csharp
+// Auth server
+builder.Services.AddPulseAuth(...)
+    .AddGoogleTokenExchange(
+        builder.Configuration["Auth:Google:ClientId"]!);
+
+// Client
+AllowedGrantTypes = [GrantTypes.Password, GrantTypes.GoogleIdToken, GrantTypes.RefreshToken],
+```
+
+```typescript
+// After Google SDK returns a credential (ID token)
+const res = await fetch('https://auth.myapp.com/connect/token', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams({
+    grant_type: 'urn:ietf:params:oauth:grant-type:google_id_token',
+    client_id:  'my-spa',
+    token:      googleCredential,
+    scope:      'openid profile email offline_access api',
+  }),
+});
+```
+
+### Facebook Login (access token exchange)
+
+```csharp
+// Auth server
+builder.Services.AddPulseAuth(...)
+    .AddFacebookTokenExchange(
+        builder.Configuration["Auth:Facebook:AppId"]!,
+        builder.Configuration["Auth:Facebook:AppSecret"]!);
+
+// Client
+AllowedGrantTypes = [GrantTypes.Password, GrantTypes.FacebookAccessToken, GrantTypes.RefreshToken],
+```
+
+```typescript
+// After FB.login() returns authResponse.accessToken
+const res = await fetch('https://auth.myapp.com/connect/token', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams({
+    grant_type: 'urn:ietf:params:oauth:grant-type:facebook_access_token',
+    client_id:  'my-spa',
+    token:      fbAccessToken,
+    scope:      'openid profile email offline_access api',
+  }),
+});
+```
+
+### Refreshing tokens
+
+```typescript
+const res = await fetch('https://auth.myapp.com/connect/token', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams({
+    grant_type:    'refresh_token',
+    client_id:     'my-spa',
+    refresh_token: storedRefreshToken,
+  }),
+});
+```
+
+---
+
+## Validating tokens in other microservices
+
+Any ASP.NET Core microservice can validate PulseAuth tokens using standard JWT Bearer — no PulseAuth package required:
+
+```csharp
+// In any microservice Program.cs
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(opts =>
+    {
+        opts.Authority = "https://auth.myapp.com";   // PulseAuth discovery endpoint
+        opts.Audience  = "my-spa";
+        opts.RequireHttpsMetadata = false;            // dev only
+    });
+
+builder.Services.AddAuthorization();
+
+// ...
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapGet("/orders", (ClaimsPrincipal user) => ...)
+   .RequireAuthorization();
+```
+
+The microservice fetches public keys from `/.well-known/jwks` automatically and caches them. No shared secrets, no extra dependencies beyond `Microsoft.AspNetCore.Authentication.JwtBearer`.
+
+---
+
 ## Custom user store
 
-Implement `IUserAuthenticationService` to use any user database:
+Implement `IUserAuthenticationService` to use any user database (without ASP.NET Core Identity):
 
 ```csharp
 public class MyUserService : IUserAuthenticationService
@@ -201,144 +394,22 @@ public class MyUserService : IUserAuthenticationService
     public Task<UserInfo?> ValidateCredentialsAsync(string user, string pass, CancellationToken ct) { ... }
     public Task<UserInfo?> GetUserByIdAsync(string subjectId, CancellationToken ct) { ... }
     public Task<UserInfo?> FindByExternalProviderAsync(string provider, string externalId, CancellationToken ct) { ... }
-    public Task<UserInfo>  AutoProvisionUserAsync(string provider, string externalId, IEnumerable<Claim> claims, CancellationToken ct) { ... }
+    public Task<UserInfo>  AutoProvisionUserAsync(string provider, string externalId,
+                               IEnumerable<Claim> claims, CancellationToken ct) { ... }
 }
 
-// Register:
-builder.Services
-    .AddPulseAuth(...)
+// Register instead of .AddIdentityUsers<T>():
+builder.Services.AddPulseAuth(...)
     .AddUserAuthentication<MyUserService>();
 ```
 
 ---
 
-## React / Angular SPA — pure API mode
+## Login page (Authorization Code flow)
 
-If your frontend is a React or Angular SPA and you want to keep **all UI in the frontend** (no server-rendered login pages), configure PulseAuth in pure API mode:
-
-### Email/password login
-
-Enable the `password` grant on your client and call `/connect/token` directly from the SPA:
+PulseAuth redirects to `LoginPath` (default `/Account/Login`) when the user is not authenticated. Your login page signs the user in via ASP.NET Core Identity and redirects back:
 
 ```csharp
-// Auth server Program.cs
-var client = new Client
-{
-    ClientId          = "mundoecoa-spa",
-    AllowedGrantTypes = [GrantTypes.Password, GrantTypes.RefreshToken],
-    AllowOfflineAccess = true,
-    AllowedScopes     = [StandardScopes.OpenId, StandardScopes.Profile,
-                          StandardScopes.Email, StandardScopes.OfflineAccess, "api"],
-};
-```
-
-```typescript
-// React / TypeScript
-const tokens = await fetch('https://auth.myapp.com/connect/token', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-  body: new URLSearchParams({
-    grant_type: 'password',
-    client_id:  'mundoecoa-spa',
-    username:   email,
-    password:   password,
-    scope:      'openid profile email offline_access api',
-  }),
-}).then(r => r.json());
-// tokens.access_token, tokens.refresh_token, tokens.id_token
-```
-
-### Google Sign-In (SDK → token exchange)
-
-1. Add the exchange on the auth server:
-
-```csharp
-builder.Services
-    .AddPulseAuth(...)
-    .AddGoogleTokenExchange(googleClientId: "123-xxx.apps.googleusercontent.com");
-```
-
-2. Enable the grant type on the client:
-
-```csharp
-AllowedGrantTypes = [GrantTypes.Password, GrantTypes.GoogleIdToken, GrantTypes.RefreshToken],
-```
-
-3. From React (using `@react-oauth/google` or similar):
-
-```typescript
-// After Google Sign-In returns credential (ID token)
-const tokens = await fetch('https://auth.myapp.com/connect/token', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-  body: new URLSearchParams({
-    grant_type: 'urn:ietf:params:oauth:grant-type:google_id_token',
-    client_id:  'mundoecoa-spa',
-    token:      googleCredential,   // from useGoogleLogin / CredentialResponse
-    scope:      'openid profile email offline_access api',
-  }),
-}).then(r => r.json());
-```
-
-### Facebook Login (SDK → token exchange)
-
-1. Add the exchange on the auth server:
-
-```csharp
-builder.Services
-    .AddPulseAuth(...)
-    .AddFacebookTokenExchange(appId: "123456789", appSecret: "your-secret");
-```
-
-2. Enable the grant type on the client:
-
-```csharp
-AllowedGrantTypes = [GrantTypes.Password, GrantTypes.FacebookAccessToken, GrantTypes.RefreshToken],
-```
-
-3. From React (using `react-facebook-login` or the JS SDK):
-
-```typescript
-// After FB.login() returns authResponse.accessToken
-const tokens = await fetch('https://auth.myapp.com/connect/token', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-  body: new URLSearchParams({
-    grant_type: 'urn:ietf:params:oauth:grant-type:facebook_access_token',
-    client_id:  'mundoecoa-spa',
-    token:      fbAccessToken,
-    scope:      'openid profile email offline_access api',
-  }),
-}).then(r => r.json());
-```
-
-### Validating tokens in other microservices
-
-Any microservice in your ecosystem can validate PulseAuth tokens using standard JWT Bearer authentication — no package dependency required:
-
-```csharp
-// In any ASP.NET Core microservice
-builder.Services
-    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(opts =>
-    {
-        // Auth server URL — tokens are validated against its JWKS automatically
-        opts.Authority = "https://auth.myapp.com";
-        opts.Audience  = "mundoecoa-spa";   // or your client_id
-        opts.RequireHttpsMetadata = false;  // only in dev
-    });
-```
-
-The microservice downloads the public keys from `https://auth.myapp.com/.well-known/jwks` and caches them. No shared secrets, no extra packages beyond `Microsoft.AspNetCore.Authentication.JwtBearer`.
-
----
-
-## Login page
-
-PulseAuth redirects to `LoginPath` (default `/Account/Login`) when the user is not authenticated. Your login page must sign the user in using ASP.NET Core Identity and then redirect back to the `returnUrl` parameter.
-
-```csharp
-// Example Razor Page
 public class LoginModel : PageModel
 {
     public async Task<IActionResult> OnPostAsync(string returnUrl = "/")
@@ -355,24 +426,84 @@ public class LoginModel : PageModel
 
 ---
 
-## External provider callback
+## Troubleshooting
 
-After a social login, redirect the user back to the authorize endpoint:
+### `Object cannot be cast from DBNull` when running `database update`
+
+**Cause:** Oracle's `MySql.EntityFrameworkCore` package is not fully compatible with MariaDB. Its internal character-set loader expects columns that MariaDB's `information_schema` returns as `NULL`.
+
+**Fix:** replace Oracle's package with [Pomelo](https://github.com/PomeloFoundation/Pomelo.EntityFrameworkCore.MySql), which is built for both MySQL and MariaDB:
+
+```bash
+dotnet remove package MySql.EntityFrameworkCore
+dotnet add package Pomelo.EntityFrameworkCore.MySql
+```
+
+Then replace `UseMySQL` (capital SQL) with `UseMySql` everywhere:
 
 ```csharp
-// /Account/ExternalLoginCallback
-public async Task<IActionResult> Callback(string returnUrl = "/")
-{
-    var info = await _signInManager.GetExternalLoginInfoAsync();
-    
-    // Find or auto-provision the user
-    var user = await _pulseAuthUsers.FindByExternalProviderAsync(info.LoginProvider, info.ProviderKey)
-            ?? await _pulseAuthUsers.AutoProvisionUserAsync(
-                info.LoginProvider, info.ProviderKey, info.Principal.Claims);
+opts.UseMySql(conn, ServerVersion.AutoDetect(conn))
+// or with a pinned version (recommended for design-time):
+opts.UseMySql(conn, new MariaDbServerVersion(new Version(10, 11, 0)))
+```
 
-    await _signInManager.SignInAsync(identityUser, isPersistent: false);
-    return LocalRedirect(returnUrl);
-}
+---
+
+### `'Requested value 'None' was not found.'` during migrations
+
+**Cause:** Oracle's `MySql.EntityFrameworkCore` cannot parse `SslMode=None` — that value does not exist in its enum. The design-time factory's connection string contains an invalid SSL mode, or the connection string passed to `UseMySQL` is empty.
+
+**Fix (if still using Oracle's package):** use `SslMode=Disabled` instead of `SslMode=None`, and ensure the connection string is never empty:
+
+```csharp
+var cs = "Server=localhost;Port=3306;Database=myauth;User Id=root;Password=secret;SslMode=Disabled;";
+```
+
+**Recommended fix:** switch to Pomelo (see above) — this error does not occur with Pomelo.
+
+---
+
+### `Unable to create a 'DbContext'` — factory not found
+
+EF tools print this when no `IDesignTimeDbContextFactory<T>` is found in your startup project and the application host startup also fails.
+
+Ensure your factory: (1) is `public`, (2) is in your startup project (not in the library), (3) implements `IDesignTimeDbContextFactory<YourContext>` where `YourContext` matches the `--context` argument.
+
+---
+
+### Services registered after `builder.Build()`
+
+All `builder.Services.Add*` calls must come **before** `var app = builder.Build()`. Services added after `Build()` are silently ignored.
+
+```csharp
+// ✅ Correct
+builder.Services.AddDbContext<AppDbContext>(...);
+builder.Services.AddPulseAuth(...);
+var app = builder.Build();
+
+// ❌ Wrong — these services are never registered
+var app = builder.Build();
+builder.Services.AddDbContext<AppDbContext>(...);
+```
+
+---
+
+### `AuthDbContext` cannot be resolved — inheriting `PulseAuthDbContext`
+
+When your context inherits `PulseAuthDbContext`, its constructor must accept `DbContextOptions<YourContext>` (not `DbContextOptions<PulseAuthDbContext>`):
+
+```csharp
+// ❌ Wrong — DI registers DbContextOptions<AppDbContext>, not <PulseAuthDbContext>
+public AppDbContext(DbContextOptions<PulseAuthDbContext> options) : base(options) { }
+
+// ✅ Correct — PulseAuthDbContext has a protected constructor that accepts DbContextOptions
+public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+```
+
+And in `Program.cs` use the generic overload so DI wires up `AppDbContext` as `PulseAuthDbContext`:
+
+```csharp
+.AddEntityFrameworkStores<AppDbContext>(opts => opts.UseMySql(conn, version))
 ```
 
 ---
@@ -388,7 +519,7 @@ This project is developed and maintained by **Andrés Mariño**. If you find thi
 
 ## 📝 License
 
-This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE) for details.
 
 ---
 
