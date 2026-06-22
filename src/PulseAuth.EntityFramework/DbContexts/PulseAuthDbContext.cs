@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using PulseAuth.EntityFramework.Abstractions;
 using PulseAuth.EntityFramework.Entities;
 
 namespace PulseAuth.EntityFramework.DbContexts;
@@ -22,7 +23,7 @@ namespace PulseAuth.EntityFramework.DbContexts;
 /// }
 /// </code>
 /// </example>
-public class PulseAuthDbContext : DbContext
+public class PulseAuthDbContext : DbContext, IPulseAuthDbContext
 {
     /// <summary>Standalone usage — registered directly via AddEntityFrameworkStores.</summary>
     public PulseAuthDbContext(DbContextOptions<PulseAuthDbContext> options) : base(options) { }
@@ -82,64 +83,6 @@ public class PulseAuthDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
-
-        // ── Clients ──────────────────────────────────────────────────────────
-        builder.Entity<ClientEntity>(e =>
-        {
-            e.HasIndex(c => c.ClientId).IsUnique();
-
-            e.HasMany(c => c.GrantTypes)
-             .WithOne()
-             .HasForeignKey(x => x.ClientId)
-             .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(c => c.RedirectUris)
-             .WithOne()
-             .HasForeignKey(x => x.ClientId)
-             .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(c => c.PostLogoutUris)
-             .WithOne()
-             .HasForeignKey(x => x.ClientId)
-             .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(c => c.AllowedScopes)
-             .WithOne()
-             .HasForeignKey(x => x.ClientId)
-             .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(c => c.CorsOrigins)
-             .WithOne()
-             .HasForeignKey(x => x.ClientId)
-             .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(c => c.Claims)
-             .WithOne()
-             .HasForeignKey(x => x.ClientId)
-             .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        builder.Entity<ClientGrantTypeEntity>(e =>
-        {
-            e.HasIndex(x => new { x.ClientId, x.GrantType }).IsUnique();
-        });
-
-        builder.Entity<ClientScopeEntity>(e =>
-        {
-            e.HasIndex(x => new { x.ClientId, x.Scope }).IsUnique();
-        });
-
-        // ── Persisted grants ─────────────────────────────────────────────────
-        builder.Entity<AuthorizationCodeEntity>(e =>
-        {
-            e.HasIndex(x => x.SubjectId);
-            e.HasIndex(x => x.ExpiresAt);
-        });
-
-        builder.Entity<RefreshTokenEntity>(e =>
-        {
-            e.HasIndex(x => new { x.SubjectId, x.ClientId });
-            e.HasIndex(x => x.ExpiresAt);
-        });
+        PulseAuthModelConfiguration.Apply(builder);
     }
 }

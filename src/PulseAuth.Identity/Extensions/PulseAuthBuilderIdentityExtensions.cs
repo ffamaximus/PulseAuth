@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using PulseAuth.Abstractions;
 using PulseAuth.Builders;
+using PulseAuth.Identity.Options;
 using PulseAuth.Identity.Services;
 
 namespace PulseAuth.Identity.Extensions;
@@ -17,24 +18,47 @@ public static class PulseAuthBuilderIdentityExtensions
     /// <see cref="UserManager{TUser}"/> and <see cref="SignInManager{TUser}"/>.
     /// </summary>
     /// <typeparam name="TUser">Your <see cref="IdentityUser"/>-derived class.</typeparam>
+    /// <param name="builder">The PulseAuth builder.</param>
+    /// <param name="configureClaims">
+    /// Optional. Configure which Identity claims are included in tokens.
+    /// </param>
     /// <example>
+    /// Default (no extra claims):
     /// <code>
-    /// builder.Services
-    ///     .AddIdentity&lt;ApplicationUser, IdentityRole&gt;()
-    ///     .AddEntityFrameworkStores&lt;ApplicationDbContext&gt;();
+    /// .AddIdentityUsers&lt;IdentityUser&gt;()
+    /// </code>
     ///
-    /// builder.Services
-    ///     .AddPulseAuth(opts => opts.Issuer = "https://auth.myapp.com")
-    ///     .AddDeveloperSigningCredential()
-    ///     .AddInMemoryClients(Config.Clients)
-    ///     .AddIdentityUsers&lt;ApplicationUser&gt;();
+    /// Include roles and all custom user claims:
+    /// <code>
+    /// .AddIdentityUsers&lt;IdentityUser&gt;(claims =>
+    /// {
+    ///     claims.IncludeRoles      = true;
+    ///     claims.IncludeUserClaims = true;
+    /// })
+    /// </code>
+    ///
+    /// Include roles and only specific claim types:
+    /// <code>
+    /// .AddIdentityUsers&lt;IdentityUser&gt;(claims =>
+    /// {
+    ///     claims.IncludeRoles      = true;
+    ///     claims.IncludeUserClaims = true;
+    ///     claims.ClaimTypeFilter   = ["department", "tenant", "subscription"];
+    /// })
     /// </code>
     /// </example>
-    public static PulseAuthBuilder AddIdentityUsers<TUser>(this PulseAuthBuilder builder)
+    public static PulseAuthBuilder AddIdentityUsers<TUser>(
+        this PulseAuthBuilder builder,
+        Action<IdentityClaimsOptions>? configureClaims = null)
         where TUser : IdentityUser
     {
+        var opts = new IdentityClaimsOptions();
+        configureClaims?.Invoke(opts);
+
+        builder.Services.AddSingleton(opts);
         builder.Services.AddScoped<IUserAuthenticationService,
             IdentityUserAuthenticationService<TUser>>();
+
         return builder;
     }
 }

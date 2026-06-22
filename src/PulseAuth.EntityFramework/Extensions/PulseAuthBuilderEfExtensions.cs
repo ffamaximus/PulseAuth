@@ -2,26 +2,27 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using PulseAuth.Abstractions;
 using PulseAuth.Builders;
+using PulseAuth.EntityFramework.Abstractions;
 using PulseAuth.EntityFramework.DbContexts;
 using PulseAuth.EntityFramework.Stores;
 
 namespace PulseAuth.EntityFramework.Extensions;
 
 /// <summary>
-/// Extension methods to use EF Core-backed stores with PulseAuth.
+/// Extension methods to wire up EF Core-backed PulseAuth stores.
 /// </summary>
 public static class PulseAuthBuilderEfExtensions
 {
     // ── Standalone PulseAuthDbContext ─────────────────────────────────────────
 
     /// <summary>
-    /// Registers <see cref="PulseAuthDbContext"/> and replaces the in-memory stores with
-    /// EF Core-backed implementations.
+    /// Registers <see cref="PulseAuthDbContext"/> (provider-agnostic) and replaces the
+    /// in-memory stores with EF Core-backed implementations.
     /// </summary>
     /// <example>
     /// <code>
     /// builder.Services.AddPulseAuth(...)
-    ///     .AddEntityFrameworkStores(opts => opts.UseSqlServer(connectionString));
+    ///     .AddEntityFrameworkStores(opts => opts.UseMySql(cs, version));
     /// </code>
     /// </example>
     public static PulseAuthBuilder AddEntityFrameworkStores(
@@ -29,6 +30,8 @@ public static class PulseAuthBuilderEfExtensions
         Action<DbContextOptionsBuilder> optionsAction)
     {
         builder.Services.AddDbContext<PulseAuthDbContext>(optionsAction);
+        builder.Services.AddScoped<IPulseAuthDbContext>(
+            sp => sp.GetRequiredService<PulseAuthDbContext>());
         RegisterStores(builder);
         return builder;
     }
@@ -39,31 +42,29 @@ public static class PulseAuthBuilderEfExtensions
     /// </summary>
     public static PulseAuthBuilder AddEntityFrameworkStores(this PulseAuthBuilder builder)
     {
+        builder.Services.AddScoped<IPulseAuthDbContext>(
+            sp => sp.GetRequiredService<PulseAuthDbContext>());
         RegisterStores(builder);
         return builder;
     }
 
-    // ── Derived context (your AppDbContext : PulseAuthDbContext) ──────────────
+    // ── Derived from PulseAuthDbContext (e.g. AppDbContext : PulseAuthDbContext) ──
 
     /// <summary>
-    /// Registers a derived context and replaces the in-memory stores with EF Core-backed
-    /// implementations. Use this when your application's <c>DbContext</c> inherits
+    /// Registers a derived <see cref="PulseAuthDbContext"/> and replaces the in-memory stores
+    /// with EF Core-backed implementations. Use this when your <c>DbContext</c> inherits
     /// <see cref="PulseAuthDbContext"/> to share a single database schema.
     /// </summary>
     /// <typeparam name="TContext">Your derived context type.</typeparam>
     /// <example>
     /// <code>
-    /// // AppDbContext.cs
     /// public class AppDbContext : PulseAuthDbContext
     /// {
     ///     public AppDbContext(DbContextOptions&lt;AppDbContext&gt; options) : base(options) { }
-    ///     public DbSet&lt;Order&gt; Orders { get; set; } = default!;
     /// }
     ///
-    /// // Program.cs
     /// builder.Services.AddPulseAuth(...)
-    ///     .AddEntityFrameworkStores&lt;AppDbContext&gt;(opts =>
-    ///         opts.UseMySQL(connectionString));
+    ///     .AddEntityFrameworkStores&lt;AppDbContext&gt;(opts => opts.UseMySql(...));
     /// </code>
     /// </example>
     public static PulseAuthBuilder AddEntityFrameworkStores<TContext>(
@@ -72,26 +73,53 @@ public static class PulseAuthBuilderEfExtensions
         where TContext : PulseAuthDbContext
     {
         builder.Services.AddDbContext<TContext>(optionsAction);
-
-        // Expose TContext as PulseAuthDbContext so the EF stores can resolve it from DI.
-        builder.Services.AddScoped<PulseAuthDbContext>(
+        builder.Services.AddScoped<IPulseAuthDbContext>(
             sp => sp.GetRequiredService<TContext>());
-
         RegisterStores(builder);
         return builder;
     }
 
     /// <summary>
-    /// Registers EF Core stores against a derived context that is already registered
-    /// in the DI container.
+    /// Registers EF Core stores against a derived <see cref="PulseAuthDbContext"/> that is
+    /// already registered in the DI container.
     /// </summary>
-    /// <typeparam name="TContext">Your derived context type.</typeparam>
     public static PulseAuthBuilder AddEntityFrameworkStores<TContext>(this PulseAuthBuilder builder)
         where TContext : PulseAuthDbContext
     {
-        builder.Services.AddScoped<PulseAuthDbContext>(
+        builder.Services.AddScoped<IPulseAuthDbContext>(
             sp => sp.GetRequiredService<TContext>());
+        RegisterStores(builder);
+        return builder;
+    }
 
+    // ── PulseAuthIdentityDbContext<TUser> (combined Identity + PulseAuth) ─────
+
+    /// <summary>
+    /// Registers EF Core stores against a context that inherits
+    /// <see cref="PulseAuthIdentityDbContext{TUser}"/> (ASP.NET Core Identity +
+    /// PulseAuth tables in a single migration). The context must already be registered
+    /// in the DI container via <c>AddIdentity().AddEntityFrameworkStores&lt;TContext&gt;()</c>.
+    /// </summary>
+    /// <typeparam name="TContext">
+    /// Your context type (must implement <see cref="IPulseAuthDbContext"/> and
+    /// inherit <see cref="DbContext"/>).
+    /// </typeparam>
+    /// <example>
+    /// <code>
+    /// builder.Services
+    ///     .AddIdentity&lt;IdentityUser, IdentityRole&gt;()
+    ///     .AddEntityFrameworkStores&lt;AuthDbContext&gt;();
+    ///
+    /// builder.Services.AddPulseAuth(...)
+    ///     .AddEntityFrameworkStoresWithIdentity&lt;AuthDbContext&gt;();
+    /// </code>
+    /// </example>
+    public static PulseAuthBuilder AddEntityFrameworkStoresWithIdentity<TContext>(
+        this PulseAuthBuilder builder)
+        where TContext : DbContext, IPulseAuthDbContext
+    {
+        builder.Services.AddScoped<IPulseAuthDbContext>(
+            sp => sp.GetRequiredService<TContext>());
         RegisterStores(builder);
         return builder;
     }

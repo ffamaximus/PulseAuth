@@ -1,23 +1,23 @@
 using Microsoft.EntityFrameworkCore;
 using PulseAuth.Abstractions;
-using PulseAuth.EntityFramework.DbContexts;
+using PulseAuth.EntityFramework.Abstractions;
 using PulseAuth.EntityFramework.Entities;
 using PulseAuth.Models;
 
 namespace PulseAuth.EntityFramework.Stores;
 
 /// <summary>
-/// Entity Framework Core implementation of <see cref="IAuthorizationCodeStore"/>. This store uses a database to persist authorization codes, making it suitable for multi-instance deployments and production environments. The implementation includes methods to store new authorization codes, retrieve existing codes by their code string, mark codes as consumed, and remove expired or consumed codes from the database. The store relies on the <see cref="PulseAuthDbContext"/> to interact with the underlying database, and it uses asynchronous operations to ensure scalability and responsiveness.
+/// Entity Framework Core implementation of <see cref="IAuthorizationCodeStore"/>. This store uses a database to persist authorization codes, making it suitable for multi-instance deployments and production environments. The implementation includes methods to store new authorization codes, retrieve existing codes by their code string, mark codes as consumed, and remove expired or consumed codes from the database. The store relies on the <see cref="IPulseAuthDbContext"/> to interact with the underlying database, and it uses asynchronous operations to ensure scalability and responsiveness.
 /// </summary>
 public class EfAuthorizationCodeStore : IAuthorizationCodeStore
 {
-    private readonly PulseAuthDbContext _db;
+    private readonly IPulseAuthDbContext _db;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="EfAuthorizationCodeStore"/> class with the specified database context. The database context is used to perform CRUD operations on the authorization code entities stored in the database. This constructor is typically called by dependency injection when you register the store in your application's service container. Make sure to configure the <see cref="PulseAuthDbContext"/> properly in your application to ensure that it can connect to your database and manage the authorization code entities effectively.
+    /// Initializes a new instance of the <see cref="EfAuthorizationCodeStore"/> class with the specified database context.
     /// </summary>
     /// <param name="db"></param>
-    public EfAuthorizationCodeStore(PulseAuthDbContext db) => _db = db;
+    public EfAuthorizationCodeStore(IPulseAuthDbContext db) => _db = db;
 
     /// <summary>
     /// Stores a new authorization code in the database. This method creates a new <see cref="AuthorizationCodeEntity"/> based on the provided <see cref="AuthorizationCode"/> model and saves it to the database. The stored information includes the client ID, subject ID, scopes, code challenge details, redirect URI, nonce, session ID, creation time, and expiration time. This allows the authorization code to be retrieved and validated later during the token exchange process.

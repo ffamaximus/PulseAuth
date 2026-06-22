@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Identity;
 using PulseAuth.Abstractions;
+using PulseAuth.Identity.Options;
 using PulseAuth.Models;
 
 namespace PulseAuth.Identity.Services;
@@ -13,20 +14,21 @@ namespace PulseAuth.Identity.Services;
 public class IdentityUserAuthenticationService<TUser> : IUserAuthenticationService
     where TUser : IdentityUser
 {
-    private readonly UserManager<TUser>   _userManager;
-    private readonly SignInManager<TUser> _signInManager;
+    private readonly UserManager<TUser>    _userManager;
+    private readonly SignInManager<TUser>  _signInManager;
+    private readonly IdentityClaimsOptions _claimsOptions;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="IdentityUserAuthenticationService{TUser}"/> class with the specified UserManager and SignInManager. The UserManager is used to manage user accounts, retrieve user information, and perform user-related operations, while the SignInManager is used to handle password verification and sign-in operations. This constructor is typically called by dependency injection when you register the service in your application's service container. Make sure to configure ASP.NET Core Identity properly in your application to ensure that the UserManager and SignInManager are available for injection.
+    /// Initializes a new instance of <see cref="IdentityUserAuthenticationService{TUser}"/>.
     /// </summary>
-    /// <param name="userManager"></param>
-    /// <param name="signInManager"></param>
     public IdentityUserAuthenticationService(
-        UserManager<TUser>   userManager,
-        SignInManager<TUser> signInManager)
+        UserManager<TUser>    userManager,
+        SignInManager<TUser>  signInManager,
+        IdentityClaimsOptions claimsOptions)
     {
         _userManager   = userManager;
         _signInManager = signInManager;
+        _claimsOptions = claimsOptions;
     }
 
     /// <inheritdoc />
@@ -63,7 +65,6 @@ public class IdentityUserAuthenticationService<TUser> : IUserAuthenticationServi
     {
         var claims = externalClaims.ToList();
 
-        // Try to get a sensible username from external claims
         var email    = claims.FirstOrDefault(c => c.Type == ClaimTypes.Email)?.Value
                     ?? claims.FirstOrDefault(c => c.Type == "email")?.Value;
         var username = claims.FirstOrDefault(c => c.Type == ClaimTypes.Name)?.Value
@@ -71,7 +72,6 @@ public class IdentityUserAuthenticationService<TUser> : IUserAuthenticationServi
                     ?? email
                     ?? $"{provider}_{externalId}";
 
-        // Construct a new user
         var user = Activator.CreateInstance<TUser>();
         user.UserName = SanitizeUsername(username);
         user.Email    = email;
@@ -81,9 +81,7 @@ public class IdentityUserAuthenticationService<TUser> : IUserAuthenticationServi
             throw new InvalidOperationException(
                 $"Failed to auto-provision user: {string.Join(", ", createResult.Errors.Select(e => e.Description))}");
 
-        // Link the external login
-        var loginInfo = new UserLoginInfo(provider, externalId, provider);
-        await _userManager.AddLoginAsync(user, loginInfo);
+        await _userManager.AddLoginAsync(user, new UserLoginInfo(provider, externalId, provider));
 
         return await BuildUserInfoAsync(user);
     }
@@ -92,30 +90,49 @@ public class IdentityUserAuthenticationService<TUser> : IUserAuthenticationServi
 
     private async Task<UserInfo> BuildUserInfoAsync(TUser user)
     {
-        var claims = await _userManager.GetClaimsAsync(user);
+        // Always fetch user claims — needed to populate well-known profile fields
+        // (Name, GivenName, etc.) regardless of IncludeUserClaims setting.
+        var rawClaims = await _userManager.GetClaimsAsync(user);
 
+        // ── Additional claims (non-profile) ───────────────────────────────────
+        List<Claim> additionalClaims = [];
+
+        if (_claimsOptions.IncludeUserClaims)
+        {
+            var filtered = rawClaims.Where(c => !WellKnownClaimTypes.Contains(c.Type));
+
+            if (_claimsOptions.ClaimTypeFilter.Count > 0)
+                filtered = filtered.Where(c => _claimsOptions.ClaimTypeFilter.Contains(c.Type));
+
+            additionalClaims.AddRange(filtered);
+        }
+
+        if (_claimsOptions.IncludeRoles)
+        {
+            var roles = await _userManager.GetRolesAsync(user);
+            additionalClaims.AddRange(roles.Select(r => new Claim("role", r)));
+        }
+
+        // ── Build UserInfo ────────────────────────────────────────────────────
         return new UserInfo
         {
-            SubjectId   = user.Id,
-            Username    = user.UserName,
-            Email       = user.Email,
-            EmailVerified = user.EmailConfirmed,
-            PhoneNumber = user.PhoneNumber,
+            SubjectId           = user.Id,
+            Username            = user.UserName,
+            Email               = user.Email,
+            EmailVerified       = user.EmailConfirmed,
+            PhoneNumber         = user.PhoneNumber,
             PhoneNumberVerified = user.PhoneNumberConfirmed,
-            Name        = claims.FirstOrDefault(c => c.Type == ClaimTypes.Name)?.Value
-                       ?? claims.FirstOrDefault(c => c.Type == "name")?.Value,
-            GivenName   = claims.FirstOrDefault(c => c.Type == ClaimTypes.GivenName)?.Value,
-            FamilyName  = claims.FirstOrDefault(c => c.Type == ClaimTypes.Surname)?.Value,
-            Picture     = claims.FirstOrDefault(c => c.Type == "picture")?.Value,
-            AdditionalClaims = claims
-                .Where(c => !WellKnownClaimTypes.Contains(c.Type))
-                .ToList(),
+            Name       = rawClaims.FirstOrDefault(c => c.Type == ClaimTypes.Name)?.Value
+                      ?? rawClaims.FirstOrDefault(c => c.Type == "name")?.Value,
+            GivenName  = rawClaims.FirstOrDefault(c => c.Type == ClaimTypes.GivenName)?.Value,
+            FamilyName = rawClaims.FirstOrDefault(c => c.Type == ClaimTypes.Surname)?.Value,
+            Picture    = rawClaims.FirstOrDefault(c => c.Type == "picture")?.Value,
+            AdditionalClaims = additionalClaims,
         };
     }
 
     private static string SanitizeUsername(string input)
     {
-        // Remove characters not valid in usernames
         var safe = new string(input.Where(c => char.IsLetterOrDigit(c) || c is '_' or '-' or '.').ToArray());
         return safe.Length > 0 ? safe[..Math.Min(safe.Length, 64)] : $"user_{Guid.NewGuid():N}"[..16];
     }

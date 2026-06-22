@@ -87,33 +87,61 @@ dotnet tool install --global dotnet-ef
 
 ### 3. Choose a context strategy
 
-PulseAuth supports two patterns for the database context:
+PulseAuth supports three patterns. Pick the one that fits your app:
 
-#### Option A — Combined context (recommended)
+#### Option A — Single migration for Identity + PulseAuth (recommended)
 
-Your application has a single `DbContext` that inherits `PulseAuthDbContext`. This gives you one migration, one connection, and all tables in the same database.
+Inherit `PulseAuthIdentityDbContext<TUser>`. One migration creates **both** `AspNet*` (Identity) and `PulseAuth_*` tables in the same database. No double-context confusion.
 
 ```csharp
-// Infrastructure/Contexts/AppDbContext.cs
+// Infrastructure/Contexts/AuthDbContext.cs
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using PulseAuth.EntityFramework.DbContexts;
 
+public class AuthDbContext : PulseAuthIdentityDbContext<IdentityUser>
+{
+    public AuthDbContext(DbContextOptions<AuthDbContext> options) : base(options) { }
+
+    // Add your own application DbSets here if needed
+}
+```
+
+Then in `Program.cs`:
+
+```csharp
+// Identity registers its stores via AuthDbContext
+builder.Services
+    .AddIdentity<IdentityUser, IdentityRole>()
+    .AddEntityFrameworkStores<AuthDbContext>()
+    .AddDefaultTokenProviders();
+
+// PulseAuth reads the same context that Identity already registered
+builder.Services.AddPulseAuth(...)
+    .AddEntityFrameworkStoresWithIdentity<AuthDbContext>();
+```
+
+> `AddEntityFrameworkStoresWithIdentity<TContext>` does **not** re-register the DbContext — it only resolves `TContext` from DI (which Identity already registered) and wires up the PulseAuth stores.
+
+#### Option B — PulseAuth tables only (inherit PulseAuthDbContext)
+
+Inherit `PulseAuthDbContext` if you don't use ASP.NET Core Identity or you want Identity in a separate context.
+
+```csharp
 public class AppDbContext : PulseAuthDbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
-
-    // Add your own DbSets here:
     public DbSet<Order> Orders { get; set; } = default!;
 }
 ```
 
-#### Option B — Standalone context
+#### Option C — Fully standalone
 
-Use `PulseAuthDbContext` directly with no inheritance. Identity tables and PulseAuth tables live in separate contexts (can be same or different databases).
+Use `PulseAuthDbContext` directly. Identity and PulseAuth each use their own context (can be the same or different databases).
 
 ---
 
-### 4. `Program.cs`
+### 4. `Program.cs` — Option A (recommended)
 
 > **Important:** all `builder.Services` calls must come **before** `builder.Build()`.
 
@@ -130,10 +158,15 @@ var builder = WebApplication.CreateBuilder(args);
 var conn = builder.Configuration.GetConnectionString("AuthDb")!;
 
 // ── ASP.NET Core Identity ─────────────────────────────────────────────────────
+// Identity registers AuthDbContext in DI and configures its own stores.
 builder.Services
     .AddIdentity<IdentityUser, IdentityRole>()
-    .AddEntityFrameworkStores<AppDbContext>()
+    .AddEntityFrameworkStores<AuthDbContext>()
     .AddDefaultTokenProviders();
+
+// Register AuthDbContext with EF Core (must come after AddIdentity, before Build)
+builder.Services.AddDbContext<AuthDbContext>(opts =>
+    opts.UseMySql(conn, new MariaDbServerVersion(new Version(10, 11, 0))));
 
 // ── PulseAuth ─────────────────────────────────────────────────────────────────
 builder.Services
@@ -142,14 +175,10 @@ builder.Services
         opts.Issuer = builder.Configuration["PulseAuth:Issuer"]!;
         opts.RotateRefreshTokens = true;
     })
-    .AddDeveloperSigningCredential()          // swap for persistent key in prod
+    .AddDeveloperSigningCredential()          // swap for persistent RSA key in prod
     .AddIdentityUsers<IdentityUser>()
-    // Combined context (Option A):
-    .AddEntityFrameworkStores<AppDbContext>(opts =>
-        opts.UseMySql(conn, ServerVersion.AutoDetect(conn)))
-    // Standalone context (Option B):
-    // .AddEntityFrameworkStores(opts =>
-    //     opts.UseMySql(conn, ServerVersion.AutoDetect(conn)))
+    // Reuses the AuthDbContext already registered above by Identity
+    .AddEntityFrameworkStoresWithIdentity<AuthDbContext>()
     .AddInMemoryClients(
     [
         new Client
@@ -189,27 +218,26 @@ PulseAuth.EntityFramework ships **without** an embedded database provider — mi
 Add this file to your startup project. It lets `dotnet ef` instantiate the context without booting your full app:
 
 ```csharp
-// Infrastructure/Factories/AppDbContextFactory.cs
+// Infrastructure/Factories/AuthDbContextFactory.cs  (Option A — PulseAuthIdentityDbContext)
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 
-public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
+public class AuthDbContextFactory : IDesignTimeDbContextFactory<AuthDbContext>
 {
-    public AppDbContext CreateDbContext(string[] args)
+    public AuthDbContext CreateDbContext(string[] args)
     {
-        // Use a hardcoded dev connection string — AutoDetect requires a live server
-        // and should not be used here.
+        // Use a hardcoded dev connection string — AutoDetect requires a live server.
         var cs = Environment.GetEnvironmentVariable("DESIGN_CONNECTION")
                  ?? "Server=localhost;Port=3306;Database=myauth_dev;" +
                     "User Id=root;Password=secret;";
 
-        var options = new DbContextOptionsBuilder<AppDbContext>()
+        var options = new DbContextOptionsBuilder<AuthDbContext>()
             .UseMySql(cs, new MariaDbServerVersion(new Version(10, 11, 0)))
-            // For MySQL:    new MySqlServerVersion(new Version(8, 0, 0))
+            // For MySQL:      new MySqlServerVersion(new Version(8, 0, 0))
             // For SQL Server: .UseSqlServer(cs)
             .Options;
 
-        return new AppDbContext(options);
+        return new AuthDbContext(options);
     }
 }
 ```
@@ -222,11 +250,11 @@ public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
 ```bash
 # From your startup project directory:
 
-# Option A — combined context (one migration covers all tables)
-dotnet ef migrations add InitApp --context AppDbContext --output-dir Migrations
-dotnet ef database update --context AppDbContext
+# Option A — PulseAuthIdentityDbContext (single migration for ALL tables)
+dotnet ef migrations add Init --context AuthDbContext --output-dir Migrations
+dotnet ef database update --context AuthDbContext
 
-# Option B — standalone contexts (one migration per context)
+# Option B/C — separate contexts (one migration per context)
 dotnet ef migrations add InitIdentity  --context ApplicationDbContext --output-dir Migrations/Identity
 dotnet ef migrations add InitPulseAuth --context PulseAuthDbContext   --output-dir Migrations/PulseAuth
 
@@ -234,7 +262,7 @@ dotnet ef database update --context ApplicationDbContext
 dotnet ef database update --context PulseAuthDbContext
 ```
 
-> **Tip:** with Option A both `AspNet*` and `PulseAuth_*` tables are created in a single pass. The table name prefixes prevent collisions even in the same database.
+> **Option A creates both `AspNet*` and `PulseAuth_*` tables in a single `dotnet ef database update`.** The table prefixes prevent naming collisions even in the same database.
 
 ---
 
@@ -504,6 +532,43 @@ And in `Program.cs` use the generic overload so DI wires up `AppDbContext` as `P
 
 ```csharp
 .AddEntityFrameworkStores<AppDbContext>(opts => opts.UseMySql(conn, version))
+```
+
+---
+
+### `Cannot create a DbSet for 'IdentityUser'` at runtime
+
+**Cause:** Your context inherits `PulseAuthDbContext` (which does NOT include Identity tables) but ASP.NET Core Identity expects Identity's `DbSet`s to be present.
+
+**Fix:** switch to `PulseAuthIdentityDbContext<TUser>` (Option A) so a single context includes both Identity and PulseAuth tables:
+
+```csharp
+// ❌ Wrong — no Identity tables
+public class AuthDbContext : PulseAuthDbContext { ... }
+
+// ✅ Correct — includes both AspNet* and PulseAuth_* tables
+public class AuthDbContext : PulseAuthIdentityDbContext<IdentityUser> { ... }
+```
+
+---
+
+### CS1929 / ambiguous call on `AddEntityFrameworkStores` with Identity
+
+**Cause:** Both `PulseAuth.EntityFramework` and `Microsoft.AspNetCore.Identity.EntityFrameworkCore` define `AddEntityFrameworkStores<TContext>` extension methods on `IdentityBuilder`. The compiler cannot resolve which one to call.
+
+**Fix:** split the calls so there is no ambiguity — call Identity's version via the `IdentityBuilder` chain, then call PulseAuth's version separately on the `PulseAuthBuilder`:
+
+```csharp
+// ✅ No ambiguity
+builder.Services
+    .AddIdentity<IdentityUser, IdentityRole>()
+    .AddEntityFrameworkStores<AuthDbContext>()   // Identity's extension
+    .AddDefaultTokenProviders();
+
+builder.Services.AddDbContext<AuthDbContext>(opts => opts.UseMySql(conn, version));
+
+builder.Services.AddPulseAuth(...)
+    .AddEntityFrameworkStoresWithIdentity<AuthDbContext>();  // PulseAuth's extension
 ```
 
 ---

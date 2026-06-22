@@ -1,23 +1,23 @@
 using Microsoft.EntityFrameworkCore;
 using PulseAuth.Abstractions;
-using PulseAuth.EntityFramework.DbContexts;
+using PulseAuth.EntityFramework.Abstractions;
 using PulseAuth.EntityFramework.Entities;
 using PulseAuth.Models;
 
 namespace PulseAuth.EntityFramework.Stores;
 
 /// <summary>
-/// Entity Framework Core implementation of <see cref="IRefreshTokenStore"/>. This class provides methods to store, retrieve, consume, and revoke refresh tokens using a database context. It uses the <see cref="PulseAuthDbContext"/> to interact with the underlying database and perform CRUD operations on the refresh token entities. This implementation is suitable for production use in scenarios where you want to persist refresh tokens across application restarts and share them across multiple instances of your application. Make sure to configure the database context properly and apply any necessary migrations to create the required tables for storing refresh tokens.
+/// Entity Framework Core implementation of <see cref="IRefreshTokenStore"/>. This class provides methods to store, retrieve, consume, and revoke refresh tokens using a database context. It uses the <see cref="IPulseAuthDbContext"/> to interact with the underlying database and perform CRUD operations on the refresh token entities. This implementation is suitable for production use in scenarios where you want to persist refresh tokens across application restarts and share them across multiple instances of your application. Make sure to configure the database context properly and apply any necessary migrations to create the required tables for storing refresh tokens.
 /// </summary>
 public class EfRefreshTokenStore : IRefreshTokenStore
 {
-    private readonly PulseAuthDbContext _db;
+    private readonly IPulseAuthDbContext _db;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="EfRefreshTokenStore"/> class with the specified database context. The constructor takes a <see cref="PulseAuthDbContext"/> as a parameter, which is used to perform database operations related to refresh tokens. This allows the store to interact with the database to save new refresh tokens, retrieve existing tokens, mark tokens as consumed, revoke tokens by subject and client, and remove expired tokens. Ensure that the database context is properly configured and registered in your application's dependency injection container for this store to function correctly.
+    /// Initializes a new instance of the <see cref="EfRefreshTokenStore"/> class with the specified database context.
     /// </summary>
     /// <param name="db"></param>
-    public EfRefreshTokenStore(PulseAuthDbContext db) => _db = db;
+    public EfRefreshTokenStore(IPulseAuthDbContext db) => _db = db ?? throw new ArgumentNullException(nameof(db));
 
     /// <summary>
     /// Stores a new refresh token in the database. This method takes a <see cref="RefreshToken"/> object as input and creates a corresponding <see cref="RefreshTokenEntity"/> to be saved in the database. The properties of the refresh token, such as the token string, client ID, subject ID, scopes, creation time, expiration time, and previous token ID (if any), are mapped to the entity before being added to the database context. After adding the new entity, the method calls DbContext.SaveChangesAsync to persist the changes to the database. This allows the application to keep track of issued refresh tokens and manage their lifecycle effectively.
