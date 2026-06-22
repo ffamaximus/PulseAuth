@@ -383,6 +383,95 @@ const res = await fetch('https://auth.myapp.com/connect/token', {
 
 ---
 
+## Roles and custom claims in tokens
+
+By default `AddIdentityUsers<TUser>()` maps standard profile fields (`name`, `given_name`, `email`, etc.) but does **not** include roles or custom claims. Enable them with the optional `configureClaims` delegate:
+
+```csharp
+// Include everything: roles + all custom claims from AspNetUserClaims
+.AddIdentityUsers<IdentityUser>(claims =>
+{
+    claims.IncludeRoles      = true;
+    claims.IncludeUserClaims = true;
+})
+
+// Only roles (no custom claims)
+.AddIdentityUsers<IdentityUser>(claims =>
+{
+    claims.IncludeRoles = true;
+})
+
+// Only specific claim types (e.g. department and tenant)
+.AddIdentityUsers<IdentityUser>(claims =>
+{
+    claims.IncludeUserClaims = true;
+    claims.ClaimTypeFilter   = ["department", "tenant"];
+})
+
+// Roles + specific claim types
+.AddIdentityUsers<IdentityUser>(claims =>
+{
+    claims.IncludeRoles      = true;
+    claims.IncludeUserClaims = true;
+    claims.ClaimTypeFilter   = ["department", "tenant", "subscription_plan"];
+})
+```
+
+The resulting JWT for a user with role `Admin` and a custom claim `department=engineering`:
+
+```json
+{
+  "sub":        "abc-123",
+  "email":      "user@example.com",
+  "role":       "Admin",
+  "department": "engineering",
+  "exp":        1719000000
+}
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `IncludeRoles` | `bool` | `false` | Adds roles from `AspNetUserRoles` as `role` claims |
+| `IncludeUserClaims` | `bool` | `true` | Adds custom claims from `AspNetUserClaims` |
+| `ClaimTypeFilter` | `ICollection<string>` | `[]` (all) | When non-empty, restricts which custom claim types are included |
+
+> Profile fields (`name`, `given_name`, `family_name`, `picture`) are always mapped regardless of these settings.
+
+### Managing roles and claims with Identity
+
+```csharp
+// Add a role to a user
+await userManager.AddToRoleAsync(user, "Admin");
+
+// Add a custom claim to a user
+await userManager.AddClaimAsync(user, new Claim("department", "engineering"));
+await userManager.AddClaimAsync(user, new Claim("tenant", "acme"));
+
+// Remove
+await userManager.RemoveFromRoleAsync(user, "Admin");
+await userManager.RemoveClaimAsync(user, new Claim("department", "engineering"));
+```
+
+> Role and claim changes take effect on the **next login** (next token issued). Existing tokens remain valid until they expire. Use short token lifetimes (`AccessTokenLifetime`) if you need changes to propagate faster.
+
+### Using roles in microservices
+
+```csharp
+// Attribute-based
+app.MapGet("/reports", [Authorize(Roles = "Admin,Manager")] () => ...);
+
+// Policy-based
+builder.Services.AddAuthorization(opts =>
+{
+    opts.AddPolicy("AdminOnly",    p => p.RequireRole("Admin"));
+    opts.AddPolicy("PremiumUsers", p => p.RequireClaim("subscription_plan", "premium"));
+});
+
+app.MapGet("/dashboard", () => ...).RequireAuthorization("AdminOnly");
+```
+
+---
+
 ## Validating tokens in other microservices
 
 Any ASP.NET Core microservice can validate PulseAuth tokens using standard JWT Bearer — no PulseAuth package required:
