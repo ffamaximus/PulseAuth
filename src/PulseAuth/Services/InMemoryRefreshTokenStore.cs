@@ -44,8 +44,40 @@ public class InMemoryRefreshTokenStore : IRefreshTokenStore
     public Task ConsumeAsync(string token, CancellationToken ct = default)
     {
         if (_tokens.TryGetValue(token, out var rt))
-            rt.IsConsumed = true;
+        {
+            lock (rt)
+                Revoke(rt);
+        }
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Atomically consumes the token. Returns <c>true</c> only for the first caller;
+    /// any concurrent or later call with the same value returns <c>false</c>.
+    /// </summary>
+    public Task<bool> TryConsumeAsync(string token, TimeSpan reuseGracePeriod, CancellationToken ct = default)
+    {
+        if (!_tokens.TryGetValue(token, out var rt))
+            return Task.FromResult(false);
+
+        lock (rt)
+        {
+            if (rt.IsConsumed)
+                return Task.FromResult(false);
+
+            rt.IsConsumed = true;
+            if (reuseGracePeriod > TimeSpan.Zero)
+                rt.ExpiresAt = DateTime.UtcNow.Add(reuseGracePeriod);
+            return Task.FromResult(true);
+        }
+    }
+
+    private static void Revoke(RefreshToken rt)
+    {
+        rt.IsConsumed = true;
+        var now = DateTime.UtcNow;
+        if (rt.ExpiresAt > now)
+            rt.ExpiresAt = now; // never inside the reuse grace window
     }
 
     /// <summary>
@@ -62,7 +94,10 @@ public class InMemoryRefreshTokenStore : IRefreshTokenStore
             .ToList();
 
         foreach (var token in toRevoke)
-            token.IsConsumed = true;
+        {
+            lock (token)
+                Revoke(token);
+        }
 
         return Task.CompletedTask;
     }

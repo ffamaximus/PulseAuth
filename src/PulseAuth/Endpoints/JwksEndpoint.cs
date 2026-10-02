@@ -13,15 +13,30 @@ internal static class JwksEndpoint
     {
         var jwks = await keyMaterial.GetPublicKeysAsync(ct);
 
-        // Serialize only the public keys array
-        var keys = jwks.Keys.Select(k => new
+        // Serialize ONLY public members, per key type (RSA: n/e, EC: crv/x/y).
+        var keys = jwks.Keys.Select(k =>
         {
-            kty = k.Kty,
-            use = "sig",
-            kid = k.Kid,
-            alg = "RS256",
-            n   = k.N,
-            e   = k.E,
+            var jwk = new Dictionary<string, string?>
+            {
+                ["kty"] = k.Kty,
+                ["use"] = "sig",
+                ["kid"] = k.Kid,
+                ["alg"] = string.IsNullOrEmpty(k.Alg) ? "RS256" : k.Alg,
+            };
+
+            if (k.Kty == "EC")
+            {
+                jwk["crv"] = k.Crv;
+                jwk["x"]   = k.X;
+                jwk["y"]   = k.Y;
+            }
+            else
+            {
+                jwk["n"] = k.N;
+                jwk["e"] = k.E;
+            }
+
+            return jwk;
         });
 
         return Results.Ok(new { keys });

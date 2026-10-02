@@ -27,15 +27,24 @@ public class AuthorizeValidationResult
     /// If IsValid is true, this property contains the list of scopes that were requested in the authorization request and successfully validated against the client's allowed scopes. This list will be used to determine what permissions the access token will have if the authorization process is successful. If IsValid is false, this property will be an empty list. Note that the "offline_access" scope is handled separately and may not be included in this list even if it was requested, depending on the client's configuration.
     /// </summary>
     public IReadOnlyList<string> RequestedScopes { get; private init; } = [];
+    /// <summary>
+    /// The redirect URI that has been verified against the client's registration
+    /// (exact match, or the single registered URI when the request omitted it).
+    /// It is <c>null</c> when the client or the redirect URI could not be validated —
+    /// in that case the error MUST be shown to the user and NEVER redirected
+    /// (RFC 6749 §4.1.2.1), otherwise the endpoint becomes an open redirector.
+    /// </summary>
+    public string? ValidatedRedirectUri { get; private init; }
 
     /// <summary>
     /// Creates a successful AuthorizeValidationResult with the validated client and requested scopes. This method should be used when the authorization request parameters have been successfully validated and the authorization process can proceed. The client parameter should contain the Client object that was validated, and the scopes parameter should contain the list of scopes that were requested and allowed for this client. The resulting AuthorizeValidationResult will have IsValid set to true, and the Error and ErrorDesc properties will be null.
     /// </summary>
     /// <param name="client"></param>
     /// <param name="scopes"></param>
+    /// <param name="validatedRedirectUri">The redirect URI verified against the client's registration.</param>
     /// <returns></returns>
-    public static AuthorizeValidationResult Success(Client client, IReadOnlyList<string> scopes)
-        => new() { IsValid = true, Client = client, RequestedScopes = scopes };
+    public static AuthorizeValidationResult Success(Client client, IReadOnlyList<string> scopes, string? validatedRedirectUri = null)
+        => new() { IsValid = true, Client = client, RequestedScopes = scopes, ValidatedRedirectUri = validatedRedirectUri };
 
     /// <summary>
     /// Creates a failed AuthorizeValidationResult with the specified error code and description. This method should be used when the authorization request parameters fail validation for any reason (e.g., missing client_id, invalid redirect_uri, unsupported response_type). The error parameter should contain the appropriate OAuth2 error code that describes the reason for the failure, and the description parameter should provide a human-readable explanation of the error. The resulting AuthorizeValidationResult will have IsValid set to false, and the Client and RequestedScopes properties will be null or empty.
@@ -45,6 +54,13 @@ public class AuthorizeValidationResult
     /// <returns></returns>
     public static AuthorizeValidationResult Fail(string error, string description)
         => new() { IsValid = false, Error = error, ErrorDesc = description };
+
+    /// <summary>
+    /// Creates a failed result that can be safely reported to the client by redirecting
+    /// to <paramref name="validatedRedirectUri"/> (only use with an already-validated URI).
+    /// </summary>
+    public static AuthorizeValidationResult Fail(string error, string description, string validatedRedirectUri)
+        => new() { IsValid = false, Error = error, ErrorDesc = description, ValidatedRedirectUri = validatedRedirectUri };
 }
 
 /// <summary>
@@ -86,14 +102,8 @@ public class AuthorizeRequestValidator
         if (client is null || !client.Enabled)
             return AuthorizeValidationResult.Fail(OAuthErrors.UnauthorizedClient, "Unknown or disabled client");
 
-        // Validate response_type
-        if (responseType != "code")
-            return AuthorizeValidationResult.Fail(OAuthErrors.UnsupportedResponseType, "Only 'code' response type is supported");
-
-        if (!client.AllowedGrantTypes.Contains(GrantTypes.AuthorizationCode))
-            return AuthorizeValidationResult.Fail(OAuthErrors.UnauthorizedClient, "Client is not allowed to use authorization_code grant");
-
-        // Validate redirect_uri
+        // Validate redirect_uri FIRST. Until it is validated, every error must be
+        // rendered locally (no redirect) — RFC 6749 §4.1.2.1.
         if (!string.IsNullOrEmpty(redirectUri))
         {
             if (!client.RedirectUris.Any(u => string.Equals(u, redirectUri, StringComparison.Ordinal)))
@@ -108,13 +118,23 @@ public class AuthorizeRequestValidator
             return AuthorizeValidationResult.Fail(OAuthErrors.InvalidRequest, "redirect_uri is required");
         }
 
+        // From here on the redirect_uri is trusted, so errors are returned to the client.
+        var validatedRedirectUri = redirectUri;
+
+        // Validate response_type
+        if (responseType != "code")
+            return AuthorizeValidationResult.Fail(OAuthErrors.UnsupportedResponseType, "Only 'code' response type is supported", validatedRedirectUri);
+
+        if (!client.AllowedGrantTypes.Contains(GrantTypes.AuthorizationCode))
+            return AuthorizeValidationResult.Fail(OAuthErrors.UnauthorizedClient, "Client is not allowed to use authorization_code grant", validatedRedirectUri);
+
         // Validate PKCE
         if (client.RequirePkce && string.IsNullOrEmpty(codeChallenge))
-            return AuthorizeValidationResult.Fail(OAuthErrors.InvalidRequest, "code_challenge is required for this client");
+            return AuthorizeValidationResult.Fail(OAuthErrors.InvalidRequest, "code_challenge is required for this client", validatedRedirectUri);
 
         if (!string.IsNullOrEmpty(codeChallengeMethod) &&
             codeChallengeMethod != "S256" && codeChallengeMethod != "plain")
-            return AuthorizeValidationResult.Fail(OAuthErrors.InvalidRequest, "Unsupported code_challenge_method. Use S256 or plain");
+            return AuthorizeValidationResult.Fail(OAuthErrors.InvalidRequest, "Unsupported code_challenge_method. Use S256 or plain", validatedRedirectUri);
 
         // Validate scopes
         var requestedScopes = (scope ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
@@ -127,12 +147,12 @@ public class AuthorizeRequestValidator
             .ToList();
 
         if (invalidScopes.Count > 0)
-            return AuthorizeValidationResult.Fail(OAuthErrors.InvalidScope, $"Scope(s) not allowed: {string.Join(", ", invalidScopes)}");
+            return AuthorizeValidationResult.Fail(OAuthErrors.InvalidScope, $"Scope(s) not allowed: {string.Join(", ", invalidScopes)}", validatedRedirectUri);
 
         // offline_access only allowed when client supports it
         if (requestedScopes.Contains(StandardScopes.OfflineAccess) && !client.AllowOfflineAccess)
             requestedScopes.Remove(StandardScopes.OfflineAccess);
 
-        return AuthorizeValidationResult.Success(client, requestedScopes.AsReadOnly());
+        return AuthorizeValidationResult.Success(client, requestedScopes.AsReadOnly(), validatedRedirectUri);
     }
 }

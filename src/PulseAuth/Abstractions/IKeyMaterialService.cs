@@ -4,8 +4,10 @@ namespace PulseAuth.Abstractions;
 
 /// <summary>
 /// Provides cryptographic key material for signing and validating tokens.
-/// The default implementation generates an in-memory RSA-2048 key pair.
-/// Replace with a persistent implementation (e.g. Azure Key Vault) for production.
+/// Built-in implementations: <c>RsaKeyMaterialService</c> (developer key persisted to a PEM file,
+/// via <c>AddDeveloperSigningCredential()</c>) and <c>StaticKeyMaterialService</c>
+/// (certificate / RSA / ECDSA key, via <c>AddSigningCredential(...)</c>, with rotation support
+/// through <c>AddValidationKey(...)</c>). All server instances must share the same signing key.
 /// </summary>
 public interface IKeyMaterialService
 {

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
+using PulseAuth.Abstractions;
 using PulseAuth.Configuration;
 using PulseAuth.Models;
 
@@ -11,9 +12,14 @@ namespace PulseAuth.Endpoints;
 /// </summary>
 internal static class DiscoveryEndpoint
 {
-    public static IResult Handle(HttpContext ctx, IOptions<PulseAuthOptions> optionsAccessor)
+    public static async Task<IResult> HandleAsync(
+        HttpContext                ctx,
+        IOptions<PulseAuthOptions> optionsAccessor,
+        IKeyMaterialService        keyMaterial,
+        CancellationToken          ct)
     {
         var options = optionsAccessor.Value;
+        var signing = await keyMaterial.GetSigningCredentialsAsync(ct);
         var issuer  = options.Issuer.TrimEnd('/');
         var prefix  = options.RoutePrefix.TrimEnd('/');
 
@@ -27,6 +33,7 @@ internal static class DiscoveryEndpoint
             EndSessionEndpoint    = $"{issuer}{prefix}/endsession",
             RevocationEndpoint    = $"{issuer}{prefix}/revocation",
             ScopesSupported       = options.SupportedScopes,
+            IdTokenSigningAlgValuesSupported = [signing.Algorithm],
             ClaimsSupported       = ["sub", "name", "given_name", "family_name", "email", "email_verified", "picture", "preferred_username"],
         };
 

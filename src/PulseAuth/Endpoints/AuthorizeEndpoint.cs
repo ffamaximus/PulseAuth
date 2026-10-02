@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
 using PulseAuth.Abstractions;
 using PulseAuth.Configuration;
@@ -40,9 +41,10 @@ internal static class AuthorizeEndpoint
             codeChallenge, codeChallengeMethod, ct);
 
         if (!validation.IsValid)
-            return BuildErrorRedirect(redirectUri, state, validation.Error!, validation.ErrorDesc!);
+            return BuildErrorResponse(validation.ValidatedRedirectUri, state, validation.Error!, validation.ErrorDesc!);
 
-        var client = validation.Client!;
+        var client           = validation.Client!;
+        var trustedRedirect  = validation.ValidatedRedirectUri!;
 
         // 2. Ensure the user is authenticated
         var authResult = await ctx.AuthenticateAsync();
@@ -58,7 +60,7 @@ internal static class AuthorizeEndpoint
                      ?? authResult.Principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
         if (string.IsNullOrEmpty(subjectId))
-            return BuildErrorRedirect(redirectUri, state, "server_error", "Could not determine user identity");
+            return BuildErrorResponse(trustedRedirect, state, "server_error", "Could not determine user identity");
 
         // 3. Issue authorization code
         var authCode = new AuthorizationCode
@@ -78,27 +80,33 @@ internal static class AuthorizeEndpoint
         await codeStore.StoreAsync(authCode, ct);
 
         // 4. Redirect back to client
-        var redirect = string.IsNullOrEmpty(redirectUri)
-            ? client.RedirectUris.First()
-            : redirectUri;
-
-        var queryString = $"?code={Uri.EscapeDataString(authCode.Code)}";
+        var parameters = new Dictionary<string, string?> { ["code"] = authCode.Code };
         if (!string.IsNullOrEmpty(state))
-            queryString += $"&state={Uri.EscapeDataString(state)}";
+            parameters["state"] = state;
 
-        return Results.Redirect(redirect + queryString);
+        return Results.Redirect(QueryHelpers.AddQueryString(trustedRedirect, parameters));
     }
 
-    private static IResult BuildErrorRedirect(string? redirectUri, string? state, string error, string description)
+    /// <summary>
+    /// Returns an authorization error. Redirects to the client ONLY when
+    /// <paramref name="validatedRedirectUri"/> has been verified against the client's
+    /// registration; otherwise the error is rendered locally (RFC 6749 §4.1.2.1),
+    /// so an attacker-supplied redirect_uri can never be used as an open redirect.
+    /// </summary>
+    private static IResult BuildErrorResponse(string? validatedRedirectUri, string? state, string error, string description)
     {
-        if (string.IsNullOrEmpty(redirectUri))
+        if (string.IsNullOrEmpty(validatedRedirectUri))
             return Results.BadRequest(new { error, error_description = description });
 
-        var qs = $"?error={Uri.EscapeDataString(error)}&error_description={Uri.EscapeDataString(description)}";
+        var parameters = new Dictionary<string, string?>
+        {
+            ["error"]             = error,
+            ["error_description"] = description,
+        };
         if (!string.IsNullOrEmpty(state))
-            qs += $"&state={Uri.EscapeDataString(state)}";
+            parameters["state"] = state;
 
-        return Results.Redirect(redirectUri + qs);
+        return Results.Redirect(QueryHelpers.AddQueryString(validatedRedirectUri, parameters));
     }
 
     private static string GenerateCode()

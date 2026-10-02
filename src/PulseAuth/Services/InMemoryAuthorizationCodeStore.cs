@@ -45,8 +45,30 @@ public class InMemoryAuthorizationCodeStore : IAuthorizationCodeStore
     public Task ConsumeAsync(string code, CancellationToken ct = default)
     {
         if (_codes.TryGetValue(code, out var authCode))
-            authCode.IsConsumed = true;
+        {
+            lock (authCode)
+                authCode.IsConsumed = true;
+        }
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Atomically consumes the code. Returns <c>true</c> only for the first caller;
+    /// any concurrent or later call with the same value returns <c>false</c>.
+    /// </summary>
+    public Task<bool> TryConsumeAsync(string code, CancellationToken ct = default)
+    {
+        if (!_codes.TryGetValue(code, out var authCode))
+            return Task.FromResult(false);
+
+        lock (authCode)
+        {
+            if (authCode.IsConsumed)
+                return Task.FromResult(false);
+
+            authCode.IsConsumed = true;
+            return Task.FromResult(true);
+        }
     }
 
     /// <summary>

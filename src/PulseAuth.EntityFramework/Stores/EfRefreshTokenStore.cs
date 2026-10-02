@@ -75,9 +75,41 @@ public class EfRefreshTokenStore : IRefreshTokenStore
     /// <returns></returns>
     public async Task ConsumeAsync(string token, CancellationToken ct = default)
     {
+        var now = DateTime.UtcNow;
         await _db.RefreshTokens
             .Where(t => t.Key == token)
-            .ExecuteUpdateAsync(s => s.SetProperty(t => t.IsConsumed, true), ct);
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.IsConsumed, true)
+                // Revoked tokens must never fall inside the rotation reuse grace window.
+                .SetProperty(t => t.ExpiresAt, t => t.ExpiresAt > now ? now : t.ExpiresAt), ct);
+    }
+
+    /// <summary>
+    /// Atomically consumes the token using a single conditional UPDATE
+    /// (<c>WHERE Key = @token AND IsConsumed = 0</c>). Returns <c>true</c> only if this
+    /// call flipped the flag; concurrent requests with the same value get <c>false</c>.
+    /// </summary>
+    public async Task<bool> TryConsumeAsync(string token, TimeSpan reuseGracePeriod, CancellationToken ct = default)
+    {
+        int affected;
+        if (reuseGracePeriod > TimeSpan.Zero)
+        {
+            // Record the rotation time in ExpiresAt (no schema change needed).
+            var graceUntil = DateTime.UtcNow.Add(reuseGracePeriod);
+            affected = await _db.RefreshTokens
+                .Where(t => t.Key == token && !t.IsConsumed)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.IsConsumed, true)
+                    .SetProperty(t => t.ExpiresAt, graceUntil), ct);
+        }
+        else
+        {
+            affected = await _db.RefreshTokens
+                .Where(t => t.Key == token && !t.IsConsumed)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.IsConsumed, true), ct);
+        }
+
+        return affected == 1;
     }
 
     /// <summary>
@@ -89,9 +121,13 @@ public class EfRefreshTokenStore : IRefreshTokenStore
     /// <returns></returns>
     public async Task RevokeBySubjectAsync(string subjectId, string clientId, CancellationToken ct = default)
     {
+        var now = DateTime.UtcNow;
         await _db.RefreshTokens
-            .Where(t => t.SubjectId == subjectId && t.ClientId == clientId && !t.IsConsumed)
-            .ExecuteUpdateAsync(s => s.SetProperty(t => t.IsConsumed, true), ct);
+            .Where(t => t.SubjectId == subjectId && t.ClientId == clientId &&
+                        (!t.IsConsumed || t.ExpiresAt > now))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.IsConsumed, true)
+                .SetProperty(t => t.ExpiresAt, t => t.ExpiresAt > now ? now : t.ExpiresAt), ct);
     }
 
     /// <summary>

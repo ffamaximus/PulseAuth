@@ -28,4 +28,19 @@ public class RefreshToken
 
     /// <summary>The token that was consumed to create this one (for rotation chain).</summary>
     public string? PreviousTokenId { get; set; }
+
+    /// <summary>
+    /// True when the token was consumed by rotation less than <paramref name="gracePeriod"/> ago,
+    /// so a concurrent/retried request presenting it may still be accepted.
+    /// </summary>
+    /// <remarks>
+    /// Rotation stores <c>ExpiresAt = consumedAt + gracePeriod</c>; revocation sets
+    /// <c>ExpiresAt = now</c>. Therefore a consumed token whose expiry lies in
+    /// <c>[now, now + gracePeriod]</c> was rotated within the window — revoked tokens never match.
+    /// </remarks>
+    public bool IsWithinReuseGracePeriod(TimeSpan gracePeriod, DateTime utcNow)
+        => IsConsumed &&
+           gracePeriod > TimeSpan.Zero &&
+           ExpiresAt > utcNow &&
+           ExpiresAt <= utcNow + gracePeriod;
 }

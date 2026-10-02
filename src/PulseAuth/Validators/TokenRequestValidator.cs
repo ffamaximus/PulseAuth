@@ -1,7 +1,9 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Options;
 using PulseAuth.Abstractions;
+using PulseAuth.Configuration;
 using PulseAuth.Constants;
 using PulseAuth.Models;
 
@@ -79,6 +81,8 @@ public class TokenRequestValidator
     private readonly IUserAuthenticationService            _users;
     private readonly IReadOnlyList<IExternalTokenValidator> _externalValidators;
 
+    private readonly TimeSpan _refreshTokenReuseGracePeriod;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="TokenRequestValidator"/> class.
     /// </summary>
@@ -87,13 +91,19 @@ public class TokenRequestValidator
         IAuthorizationCodeStore codes,
         IRefreshTokenStore refreshTokens,
         IUserAuthenticationService users,
-        IEnumerable<IExternalTokenValidator> externalValidators)
+        IEnumerable<IExternalTokenValidator> externalValidators,
+        IOptions<PulseAuthOptions>? options = null)
     {
         _clients            = clients;
         _codes              = codes;
         _refreshTokens      = refreshTokens;
         _users              = users;
         _externalValidators = externalValidators.ToList().AsReadOnly();
+
+        var opts = options?.Value;
+        _refreshTokenReuseGracePeriod = opts is { RotateRefreshTokens: true }
+            ? opts.RefreshTokenReuseGracePeriod
+            : TimeSpan.Zero;
     }
 
     /// <summary>
@@ -225,7 +235,9 @@ public class TokenRequestValidator
         if (rt is null)
             return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "Refresh token not found");
 
-        if (rt.IsConsumed)
+        // A rotated token is still accepted for a short grace period (concurrent tabs,
+        // retries). The token endpoint then issues a new refresh token without consuming again.
+        if (rt.IsConsumed && !rt.IsWithinReuseGracePeriod(_refreshTokenReuseGracePeriod, DateTime.UtcNow))
             return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "Refresh token has already been used");
 
         if (rt.ExpiresAt < DateTime.UtcNow)

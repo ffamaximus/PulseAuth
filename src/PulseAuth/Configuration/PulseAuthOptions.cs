@@ -74,6 +74,15 @@ public class PulseAuthOptions
     public bool RotateRefreshTokens { get; set; } = true;
 
     /// <summary>
+    /// Grace period during which an already-rotated refresh token is still accepted
+    /// (only when <see cref="RotateRefreshTokens"/> is true). Covers legitimate races,
+    /// e.g. an SPA open in several tabs refreshing at the same time, or a retry after a
+    /// network error. Each request inside the window receives its own new refresh token.
+    /// Default: 10 seconds. Set to <see cref="TimeSpan.Zero"/> for strict one-time use.
+    /// </summary>
+    public TimeSpan RefreshTokenReuseGracePeriod { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
     /// Scopes that are always included in the discovery document.
     /// </summary>
     public IList<string> SupportedScopes { get; set; } = ["openid", "profile", "email", "offline_access"];

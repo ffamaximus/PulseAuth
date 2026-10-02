@@ -89,6 +89,20 @@ public class EfAuthorizationCodeStore : IAuthorizationCodeStore
     }
 
     /// <summary>
+    /// Atomically consumes the code using a single conditional UPDATE
+    /// (<c>WHERE Key = @code AND IsConsumed = 0</c>). Returns <c>true</c> only if this
+    /// call flipped the flag; concurrent requests with the same value get <c>false</c>.
+    /// </summary>
+    public async Task<bool> TryConsumeAsync(string code, CancellationToken ct = default)
+    {
+        var affected = await _db.AuthorizationCodes
+            .Where(c => c.Key == code && !c.IsConsumed)
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.IsConsumed, true), ct);
+
+        return affected == 1;
+    }
+
+    /// <summary>
     /// Removes expired and consumed authorization codes from the database. This method should be called periodically (e.g., via a background service) to clean up old codes and prevent the database from growing indefinitely. It deletes all authorization code records that have either expired (i.e., their ExpiresAt timestamp is in the past) or have been marked as consumed. This helps maintain the performance and efficiency of the database by removing unnecessary records.
     /// </summary>
     /// <param name="ct"></param>

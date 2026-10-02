@@ -54,6 +54,13 @@ public class DefaultTokenService : ITokenService
             new("scope",                           string.Join(" ", scopeList)),
         };
 
+        // Include user's additional claims (roles, custom claims) in the access token
+        // so microservices can make authorization decisions without calling back to the auth server.
+        // Returns null for client_credentials (subjectId = clientId, no matching user).
+        var user = await _users.GetUserByIdAsync(subjectId, ct);
+        if (user?.AdditionalClaims is { Count: > 0 })
+            claims.AddRange(user.AdditionalClaims);
+
         if (additionalClaims is not null)
             claims.AddRange(additionalClaims);
 

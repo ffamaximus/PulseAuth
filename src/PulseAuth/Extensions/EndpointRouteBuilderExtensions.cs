@@ -28,8 +28,10 @@ public static class EndpointRouteBuilderExtensions
 
         // OpenID Connect discovery
         app.MapGet("/.well-known/openid-configuration", (HttpContext ctx,
-            IOptions<PulseAuthOptions> opts) =>
-            DiscoveryEndpoint.Handle(ctx, opts))
+            IOptions<PulseAuthOptions> opts,
+            IKeyMaterialService km,
+            CancellationToken ct) =>
+            DiscoveryEndpoint.HandleAsync(ctx, opts, km, ct))
            .AllowAnonymous()
            .WithName("PulseAuth.Discovery");
 
@@ -83,8 +85,9 @@ public static class EndpointRouteBuilderExtensions
             IOptions<PulseAuthOptions> opts,
             IClientStore clients,
             IRefreshTokenStore refreshTokens,
+            IKeyMaterialService km,
             CancellationToken ct) =>
-            EndSessionEndpoint.HandleAsync(ctx, opts, clients, refreshTokens, ct))
+            EndSessionEndpoint.HandleAsync(ctx, opts, clients, refreshTokens, km, ct))
            .WithName("PulseAuth.EndSession");
 
         return app;

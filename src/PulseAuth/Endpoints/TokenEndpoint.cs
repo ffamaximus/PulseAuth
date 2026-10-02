@@ -56,6 +56,36 @@ internal static class TokenEndpoint
         var subject   = validation.SubjectId!;
         var scopes    = validation.Scopes;
 
+        // ── One-time-use enforcement (BEFORE issuing any token) ────────────────
+        // The validator only *reads* the grant. Consumption must be an atomic
+        // compare-and-set so that two concurrent requests presenting the same
+        // code / refresh token can never both receive tokens (replay / race).
+        if (grantType == GrantTypes.AuthorizationCode)
+        {
+            if (!await codeStore.TryConsumeAsync(code, ct))
+                return InvalidGrant("Authorization code has already been used");
+        }
+
+        var rotatedRefreshToken = false;
+        if (grantType == GrantTypes.RefreshToken &&
+            validation.RefreshTokenEntity is not null &&
+            options.RotateRefreshTokens)
+        {
+            var grace = options.RefreshTokenReuseGracePeriod;
+
+            // If the validator already saw it consumed, it was accepted inside the grace window.
+            if (!validation.RefreshTokenEntity.IsConsumed &&
+                !await refreshTokenStore.TryConsumeAsync(refreshToken, grace, ct))
+            {
+                // Lost a race with a concurrent request: accept only within the grace window.
+                var current = await refreshTokenStore.FindByTokenAsync(refreshToken, ct);
+                if (current is null || !current.IsWithinReuseGracePeriod(grace, DateTime.UtcNow))
+                    return InvalidGrant("Refresh token has already been used");
+            }
+
+            rotatedRefreshToken = true;
+        }
+
         // Create access token
         var accessToken = await tokenService.CreateAccessTokenAsync(subject, client.ClientId, scopes, ct: ct);
 
@@ -68,21 +98,17 @@ internal static class TokenEndpoint
                 subject, client.ClientId, validation.Nonce, scopes, ct: ct);
         }
 
-        // Consume the authorization code
-        if (grantType == GrantTypes.AuthorizationCode && !string.IsNullOrEmpty(code))
-            await codeStore.ConsumeAsync(code, ct);
-
         // Handle refresh token
         string? newRefreshToken = null;
         if (scopes.Contains(StandardScopes.OfflineAccess) || grantType == GrantTypes.RefreshToken)
         {
-            // Rotate: consume old refresh token
-            if (grantType == GrantTypes.RefreshToken && validation.RefreshTokenEntity is not null)
+            // Old refresh token was already consumed atomically above when rotating;
+            // otherwise the same refresh token is returned (no rotation).
+            if (grantType == GrantTypes.RefreshToken &&
+                validation.RefreshTokenEntity is not null &&
+                !rotatedRefreshToken)
             {
-                if (options.RotateRefreshTokens)
-                    await refreshTokenStore.ConsumeAsync(refreshToken!, ct);
-                else
-                    newRefreshToken = refreshToken; // reuse
+                newRefreshToken = refreshToken;
             }
 
             if (newRefreshToken is null)
@@ -118,6 +144,11 @@ internal static class TokenEndpoint
 
         return Results.Ok(response);
     }
+
+    private static IResult InvalidGrant(string description)
+        => Results.Json(
+            new { error = OAuthErrors.InvalidGrant, error_description = description },
+            statusCode: 400);
 
     private static void ExtractClientCredentials(
         HttpContext ctx,

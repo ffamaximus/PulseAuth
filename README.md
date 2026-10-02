@@ -175,7 +175,7 @@ builder.Services
         opts.Issuer = builder.Configuration["PulseAuth:Issuer"]!;
         opts.RotateRefreshTokens = true;
     })
-    .AddDeveloperSigningCredential()          // swap for persistent RSA key in prod
+    .AddDeveloperSigningCredential()          // dev only — use AddSigningCredential(...) in prod (see "Signing keys")
     .AddIdentityUsers<IdentityUser>()
     // Reuses the AuthDbContext already registered above by Identity
     .AddEntityFrameworkStoresWithIdentity<AuthDbContext>()
@@ -281,6 +281,63 @@ string hash = ClientSecretHelper.HashSecret("my-secret");
 
 ---
 
+## Signing keys
+
+All instances of the authorization server **must sign with the same key**, otherwise tokens
+become invalid after a restart and do not validate across instances.
+
+### Development
+
+```csharp
+.AddDeveloperSigningCredential()                       // persisted to ./pulseauth-tempkey.pem
+.AddDeveloperSigningCredential(filename: "keys/dev.pem")
+.AddDeveloperSigningCredential(persistKey: false)      // in-memory, regenerated on every start
+```
+
+The developer key is created once and stored **unencrypted**. If the path is not writable
+(e.g. a read-only container file system) PulseAuth logs a warning and falls back to an in-memory key
+instead of failing at startup. An existing but corrupt key file is an error. Add it to `.gitignore`:
+
+```gitignore
+pulseauth-tempkey.pem
+```
+
+### Production
+
+```csharp
+// X.509 certificate with private key (RSA or ECDSA) — kid = certificate thumbprint
+var cert = X509CertificateLoader.LoadPkcs12FromFile("signing.pfx", password);   // .NET 9+
+// var cert = new X509Certificate2("signing.pfx", password);                     // .NET 8
+builder.Services.AddPulseAuth(...)
+    .AddSigningCredential(cert);
+
+// Or any RSA / ECDSA key (e.g. loaded from Azure Key Vault, AWS Secrets Manager, a PEM file)
+var rsa = RSA.Create();
+rsa.ImportFromPem(pemFromVault);
+builder.Services.AddPulseAuth(...)
+    .AddSigningCredential(new RsaSecurityKey(rsa));            // RS256, kid = RFC 7638 thumbprint
+```
+
+### Key rotation
+
+`AddValidationKey(...)` publishes an extra public key in the JWKS and accepts it when validating
+tokens, without signing with it:
+
+1. Publish the **new** key as validation key and deploy. Wait at least one access-token lifetime
+   so resource servers refresh their JWKS cache.
+2. Promote the new key to signing key and keep the **old** one as validation key.
+3. When every token signed with the old key has expired, remove it.
+
+```csharp
+.AddSigningCredential(newCert)
+.AddValidationKey(oldCert)   // public key only — no private key required
+```
+
+For fully automatic rotation, implement `IKeyMaterialService` and register it with
+`AddKeyMaterialService<T>()`.
+
+---
+
 ## React / Angular SPA — pure API mode
 
 Keep all UI in the frontend. PulseAuth exposes a REST token endpoint — no Razor pages required.
@@ -379,6 +436,19 @@ const res = await fetch('https://auth.myapp.com/connect/token', {
     refresh_token: storedRefreshToken,
   }),
 });
+```
+
+Refresh tokens are rotated on every use (`RotateRefreshTokens = true`): always store the new
+`refresh_token` from the response. A rotated token is still accepted for a short grace period
+(`RefreshTokenReuseGracePeriod`, default **10 seconds**) so concurrent refreshes — e.g. the app open
+in several tabs — or a retry after a network error do not log the user out. Each request inside the
+window gets its own new refresh token. Revoked tokens never benefit from the grace period.
+
+```csharp
+.AddPulseAuth(opts =>
+{
+    opts.RefreshTokenReuseGracePeriod = TimeSpan.FromSeconds(10); // TimeSpan.Zero = strict one-time use
+})
 ```
 
 ---

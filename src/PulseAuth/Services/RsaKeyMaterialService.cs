@@ -1,81 +1,185 @@
 using System.Security.Cryptography;
-using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using PulseAuth.Abstractions;
-using PulseAuth.Configuration;
 
 namespace PulseAuth.Services;
 
 /// <summary>
-/// In-memory RSA-2048 key material service.
-/// Generates a new key pair on startup — suitable for development and single-instance deployments.
-/// For multi-instance or production deployments, replace with a persistent key service
-/// (e.g., backed by Azure Key Vault, AWS KMS or a database).
+/// Developer RSA-2048 key material service.
 /// </summary>
+/// <remarks>
+/// <para>
+/// When a key file path is supplied (the default for
+/// <c>AddDeveloperSigningCredential()</c>), the key is created once and persisted as a
+/// PKCS#8 PEM file, so tokens keep validating after a restart and every instance that
+/// shares the file signs with the same key and publishes the same <c>kid</c>.
+/// </para>
+/// <para>
+/// Without a path, a new in-memory key is generated on every start (all previously
+/// issued tokens become invalid and multi-instance deployments break).
+/// </para>
+/// <para>
+/// NOT intended for production: the private key sits unencrypted on disk. Use
+/// <c>AddSigningCredential(...)</c> with a certificate / Key Vault key instead.
+/// </para>
+/// </remarks>
 public sealed class RsaKeyMaterialService : IKeyMaterialService, IDisposable
 {
+    /// <summary>Default file name used by <c>AddDeveloperSigningCredential()</c>.</summary>
+    public const string DefaultKeyFileName = "pulseauth-tempkey.pem";
+
     private readonly RSA _rsa;
-    private readonly RsaSecurityKey _key;
-    private readonly SigningCredentials _signingCredentials;
-    private readonly JsonWebKeySet _jwks;
+    private readonly StaticKeyMaterialService _inner;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="RsaKeyMaterialService"/> class.
     /// </summary>
-    /// <param name="options"></param>
-    public RsaKeyMaterialService(IOptions<PulseAuthOptions> options)
+    /// <param name="keyFilePath">
+    /// Path of the PEM file where the key is persisted. If the file exists the key is
+    /// loaded from it; otherwise a new key is generated and written. <c>null</c> keeps
+    /// the key in memory only (regenerated on every start).
+    /// </param>
+    /// <param name="logger">Optional logger.</param>
+    public RsaKeyMaterialService(string? keyFilePath = null, ILogger<RsaKeyMaterialService>? logger = null)
     {
-        _rsa = RSA.Create(2048);
-        _key = new RsaSecurityKey(_rsa)
+        if (string.IsNullOrWhiteSpace(keyFilePath))
         {
-            KeyId = GenerateKeyId()
-        };
+            _rsa = RSA.Create(2048);
+            logger?.LogWarning(
+                "PulseAuth is using an EPHEMERAL in-memory signing key. Tokens become invalid on restart " +
+                "and will not validate across multiple instances. Do not use this in production.");
+        }
+        else
+        {
+            var fullPath = Path.GetFullPath(keyFilePath);
+            _rsa = LoadOrCreate(fullPath, out var outcome, out var writeError);
 
-        _signingCredentials = new SigningCredentials(_key, SecurityAlgorithms.RsaSha256);
+            if (outcome == KeyFileOutcome.NotPersisted)
+            {
+                // e.g. read-only container file system: keep working like previous versions.
+                logger?.LogWarning(writeError,
+                    "PulseAuth could not persist the developer signing key to '{Path}'. Falling back to an " +
+                    "EPHEMERAL in-memory key: tokens become invalid on restart and will not validate across " +
+                    "instances. Configure a writable path, or use AddSigningCredential(...).", fullPath);
+            }
+            else
+            {
+                logger?.LogWarning(
+                    "PulseAuth is using a developer signing key {Action} '{Path}'. The private key is stored " +
+                    "unencrypted; keep the file out of source control and use AddSigningCredential(...) in production.",
+                    outcome == KeyFileOutcome.Created ? "created at" : "loaded from", fullPath);
+            }
+        }
 
-        // Build the public JWKS (only expose the public portion)
-        var jwk = JsonWebKeyConverter.ConvertFromRSASecurityKey(_key);
-        // Remove private key parameters before exposing
-        jwk.D = null; jwk.DP = null; jwk.DQ = null; jwk.P = null; jwk.Q = null; jwk.QI = null;
-
-        _jwks = new JsonWebKeySet();
-        _jwks.Keys.Add(jwk);
+        var key = new RsaSecurityKey(_rsa);
+        _inner  = new StaticKeyMaterialService(new SigningCredentials(key, SecurityAlgorithms.RsaSha256));
     }
 
-    /// <summary>
-    /// Retrieves the signing credentials containing the RSA private key for signing JWTs.
-    /// </summary>
-    /// <param name="ct"></param>
-    /// <returns></returns>
+    /// <inheritdoc />
     public Task<SigningCredentials> GetSigningCredentialsAsync(CancellationToken ct = default)
-        => Task.FromResult(_signingCredentials);
+        => _inner.GetSigningCredentialsAsync(ct);
 
-    /// <summary>
-    /// Retrieves the validation keys containing the RSA public key for verifying JWT signatures.
-    /// </summary>
-    /// <param name="ct"></param>
-    /// <returns></returns>
+    /// <inheritdoc />
     public Task<IEnumerable<SecurityKey>> GetValidationKeysAsync(CancellationToken ct = default)
-        => Task.FromResult<IEnumerable<SecurityKey>>([_key]);
+        => _inner.GetValidationKeysAsync(ct);
 
-    /// <summary>
-    /// Retrieves the JSON Web Key Set (JWKS) containing the public keys for clients to verify JWT signatures.
-    /// </summary>
-    /// <param name="ct"></param>
-    /// <returns></returns>
+    /// <inheritdoc />
     public Task<JsonWebKeySet> GetPublicKeysAsync(CancellationToken ct = default)
-        => Task.FromResult(_jwks);
+        => _inner.GetPublicKeysAsync(ct);
 
-    /// <summary>
-    /// Generates a unique Key ID (kid) for the RSA key. This is used in the JWT header to indicate which key was used to sign the token, allowing clients to select the correct public key from the JWKS for verification. The method generates a random GUID, converts it to a Base64 string, and formats it to be URL-safe and concise (16 characters). This ensures that each key has a unique identifier while keeping the kid reasonably short for use in JWT headers.
-    /// </summary>
-    /// <returns></returns>
-    private static string GenerateKeyId()
-        => Convert.ToBase64String(Guid.NewGuid().ToByteArray())
-                  .Replace("+", "-").Replace("/", "_").TrimEnd('=')[..16];
-
-    /// <summary>
-    /// Disposes the RSA key material service, releasing any resources held by the RSA instance.
-    /// </summary>
+    /// <inheritdoc />
     public void Dispose() => _rsa.Dispose();
+
+    // ── Persistence ──────────────────────────────────────────────────────────
+
+    private enum KeyFileOutcome { Loaded, Created, NotPersisted }
+
+    private static RSA LoadOrCreate(string path, out KeyFileOutcome outcome, out Exception? writeError)
+    {
+        writeError = null;
+
+        // An existing file is always used. If it is unreadable or corrupt we fail fast
+        // instead of silently switching keys.
+        if (File.Exists(path))
+        {
+            outcome = KeyFileOutcome.Loaded;
+            return LoadFromPem(path);
+        }
+
+        var rsa      = RSA.Create(2048);
+        var tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+
+        try
+        {
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory))
+                Directory.CreateDirectory(directory);
+
+            // Write to a temp file first, then move it into place atomically, so other
+            // instances never observe a half-written key file.
+            using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                if (!OperatingSystem.IsWindows())
+                    File.SetUnixFileMode(tempPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+                using var writer = new StreamWriter(stream);
+                writer.Write(rsa.ExportPkcs8PrivateKeyPem());
+            }
+
+            try
+            {
+                File.Move(tempPath, path, overwrite: false);
+            }
+            catch (IOException) when (File.Exists(path))
+            {
+                // Lost the race: another instance created the key first — use theirs.
+                TryDelete(tempPath);
+                rsa.Dispose();
+                outcome = KeyFileOutcome.Loaded;
+                return LoadFromPem(path);
+            }
+
+            outcome = KeyFileOutcome.Created;
+            return rsa;
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or NotSupportedException)
+        {
+            // Read-only / restricted file system: do not crash the host, keep an in-memory key
+            // (same behaviour as previous versions).
+            TryDelete(tempPath);
+            writeError = ex;
+            outcome    = KeyFileOutcome.NotPersisted;
+            return rsa;
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // best effort
+        }
+    }
+
+    private static RSA LoadFromPem(string path)
+    {
+        var rsa = RSA.Create();
+        try
+        {
+            rsa.ImportFromPem(File.ReadAllText(path));
+            return rsa;
+        }
+        catch (Exception ex) when (ex is ArgumentException or CryptographicException)
+        {
+            rsa.Dispose();
+            throw new InvalidOperationException(
+                $"The PulseAuth signing key file '{path}' is not a valid RSA PEM private key.", ex);
+        }
+    }
 }

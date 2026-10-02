@@ -15,7 +15,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
     <!-- ── NuGet metadata ────────────────────────────────────────────────── -->
-    <Version>1.2.4</Version>
+    <Version>1.2.5</Version>
     <Authors>Andrés Mariño</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryType>git</RepositoryType>
