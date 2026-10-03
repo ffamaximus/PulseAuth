@@ -47,8 +47,8 @@ public class Client
     public bool AllowOfflineAccess { get; set; } = false;
 
     /// <summary>
-    /// Reserved for a future consent screen. <b>Not enforced yet</b>: setting it has no effect
-    /// in this version, so do not rely on it to obtain user consent.
+    /// When true, the authorize endpoint sends the user to <c>PulseAuthOptions.ConsentPath</c> unless they
+    /// already consented to all requested scopes for this client (see <c>IConsentInteractionService</c>).
     /// </summary>
     public bool RequireConsent { get; set; } = false;
 
@@ -72,4 +72,17 @@ public class Client
     /// (e.g. tenant, service role). Protocol claims (sub, scope, client_id, ...) are ignored.
     /// </summary>
     public IDictionary<string, string> Claims { get; set; } = new Dictionary<string, string>();
+
+    /// <summary>
+    /// Format of the access tokens issued to this client: self-contained <see cref="Models.AccessTokenType.Jwt"/>
+    /// (default) or revocable <see cref="Models.AccessTokenType.Reference"/> tokens validated through introspection.
+    /// </summary>
+    public AccessTokenType AccessTokenType { get; set; } = AccessTokenType.Jwt;
+
+    /// <summary>
+    /// Allows this (confidential) client — typically an API / resource server — to call the
+    /// introspection endpoint for access tokens issued to <b>any</b> client. Without it a client
+    /// can only introspect its own tokens.
+    /// </summary>
+    public bool AllowIntrospection { get; set; } = false;
 }

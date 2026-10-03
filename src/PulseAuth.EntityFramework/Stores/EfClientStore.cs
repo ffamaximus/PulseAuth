@@ -1,5 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
 using PulseAuth.Abstractions;
+using PulseAuth.Configuration;
 using PulseAuth.EntityFramework.Abstractions;
 using PulseAuth.Models;
 
@@ -11,12 +14,21 @@ namespace PulseAuth.EntityFramework.Stores;
 public class EfClientStore : IClientStore
 {
     private readonly IPulseAuthDbContext _db;
+    private readonly IMemoryCache?       _cache;
+    private readonly TimeSpan            _corsCacheDuration;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="EfClientStore"/> class with the specified database context. The database context is used to access the Clients table and related entities (e.g., grant types, redirect URIs, allowed scopes) to retrieve client information based on the client_id. This constructor is typically called by dependency injection when you register the service in your application's service container. Make sure to configure your DbContext properly and apply any necessary migrations to ensure that the Clients table and related entities are available in the database before using this client store implementation.
     /// </summary>
     /// <param name="db"></param>
-    public EfClientStore(IPulseAuthDbContext db) => _db = db;
+    /// <param name="cache">Optional cache for CORS origin checks.</param>
+    /// <param name="options">PulseAuth options (<c>CorsOriginCacheDuration</c>).</param>
+    public EfClientStore(IPulseAuthDbContext db, IMemoryCache? cache = null, IOptions<PulseAuthOptions>? options = null)
+    {
+        _db                = db;
+        _cache             = cache;
+        _corsCacheDuration = options?.Value.CorsOriginCacheDuration ?? TimeSpan.FromMinutes(1);
+    }
 
     /// <summary>
     /// Finds a client by its unique identifier (client_id). This method queries the database for a client entity that matches the provided client_id and is enabled. It includes related entities such as grant types, redirect URIs, post-logout redirect URIs, allowed scopes, CORS origins, and claims to construct a complete Client object. If a matching client is found, it returns a Client instance populated with the retrieved data; otherwise, it returns null. The method uses asynchronous database operations to ensure non-blocking calls and accepts a CancellationToken to allow for cancellation of the operation if needed.
@@ -53,6 +65,10 @@ public class EfClientStore : IClientStore
             RefreshTokenLifetime     = entity.RefreshTokenLifetime,
             AuthorizationCodeLifetime = entity.AuthorizationCodeLifetime,
             IdentityTokenLifetime    = entity.IdentityTokenLifetime,
+            AccessTokenType          = Enum.IsDefined(typeof(AccessTokenType), entity.AccessTokenType)
+                                           ? (AccessTokenType)entity.AccessTokenType
+                                           : AccessTokenType.Jwt,
+            AllowIntrospection       = entity.AllowIntrospection,
             AllowedGrantTypes        = entity.GrantTypes.Select(g => g.GrantType).ToList(),
             RedirectUris             = entity.RedirectUris.Select(r => r.RedirectUri).ToList(),
             PostLogoutRedirectUris   = entity.PostLogoutUris.Select(p => p.PostLogoutUri).ToList(),
@@ -66,6 +82,21 @@ public class EfClientStore : IClientStore
     /// Returns true if any enabled client lists the origin in its allowed CORS origins.
     /// </summary>
     public async Task<bool> IsOriginAllowedAsync(string origin, CancellationToken ct = default)
+    {
+        // Browsers send a preflight + the actual request for every call: cache the answer briefly.
+        if (_cache is null || _corsCacheDuration <= TimeSpan.Zero)
+            return await QueryOriginAllowedAsync(origin, ct);
+
+        var key = "PulseAuth:cors:" + origin.TrimEnd('/').ToLowerInvariant();
+        if (_cache.TryGetValue(key, out bool cached))
+            return cached;
+
+        var allowed = await QueryOriginAllowedAsync(origin, ct);
+        _cache.Set(key, allowed, _corsCacheDuration);
+        return allowed;
+    }
+
+    private async Task<bool> QueryOriginAllowedAsync(string origin, CancellationToken ct)
     {
         var normalized = origin.TrimEnd('/');
         var withSlash  = normalized + "/";

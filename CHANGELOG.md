@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.4.0
+
+### New features
+- **Consent screen**: `Client.RequireConsent` is now enforced. `IConsentInteractionService` gives the
+  consent page the request details and grants (all or some scopes, remembered or one-time) or denies
+  it. Consents are stored in `IConsentStore` (in-memory / EF) and can be listed and revoked.
+- **`prompt` and `max_age`** on the authorize endpoint: `none` (`login_required` / `consent_required`),
+  `login`, `consent`.
+- **Reference (opaque) access tokens** (`Client.AccessTokenType = Reference`), revocable at any time.
+- **Introspection endpoint** `/connect/introspect` (RFC 7662) for JWT, reference and refresh tokens;
+  `Client.AllowIntrospection` for APIs. Published in discovery.
+- **Security stamp validation**: a password change / "sign out everywhere" invalidates refresh tokens
+  (`IUserAuthenticationService.GetSecurityStampAsync`, `ValidateSecurityStampOnRefresh`).
+- CORS origin checks are cached by the EF client store (`CorsOriginCacheDuration`, default 1 min).
+
+### ⚠️ Database migration required (EF stores)
+New tables `PulseAuth_ReferenceTokens` and `PulseAuth_Consents`, new columns
+`PulseAuth_RefreshTokens.UserStamp`, `PulseAuth_Clients.AccessTokenType` and
+`PulseAuth_Clients.AllowIntrospection` (all with defaults; existing data keeps working):
+
+```bash
+dotnet ef migrations add PulseAuth_1_4_0 --context <YourDbContext>
+dotnet ef database update --context <YourDbContext>
+```
+
+### API changes
+- `IPulseAuthDbContext` has two new `DbSet`s (`ReferenceTokens`, `Consents`); `PulseAuthDbContext` and
+  `PulseAuthIdentityDbContext<TUser>` already include them. Custom implementations must add them.
+- New abstractions: `IReferenceTokenStore`, `IConsentStore`, `IConsentInteractionService`,
+  `AccessTokenValidator`. `IUserAuthenticationService.GetSecurityStampAsync` has a default
+  implementation (feature off for custom user services until implemented).
+
 ## 1.3.0 — security release
 
 This release fixes several security issues found in a review of 1.2.5. **Upgrading is strongly

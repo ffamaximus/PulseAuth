@@ -13,8 +13,9 @@ namespace PulseAuth.Endpoints;
 /// <remarks>
 /// The client must authenticate (confidential clients) or identify itself with
 /// <c>client_id</c> (public clients), and can only revoke tokens that were issued to it.
-/// Refresh tokens are revoked. JWT access tokens are self-contained and cannot be revoked:
-/// the request succeeds but has no effect (keep access token lifetimes short).
+/// Refresh tokens and reference access tokens are revoked. JWT access tokens are self-contained and
+/// cannot be revoked: the request succeeds but has no effect (keep their lifetime short, or use
+/// <c>AccessTokenType.Reference</c> for clients that need revocable access tokens).
 /// </remarks>
 internal static class RevocationEndpoint
 {
@@ -22,6 +23,7 @@ internal static class RevocationEndpoint
         HttpContext              ctx,
         IClientStore             clients,
         IRefreshTokenStore       refreshTokenStore,
+        IReferenceTokenStore     referenceTokenStore,
         CancellationToken        ct)
     {
         if (!ctx.Request.HasFormContentType)
@@ -49,6 +51,17 @@ internal static class RevocationEndpoint
                 new { error = OAuthErrors.InvalidRequest, error_description = "token is required" },
                 statusCode: 400);
 
+        var logger = ctx.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("PulseAuth.RevocationEndpoint");
+
+        // Reference (opaque) access token
+        var reference = await referenceTokenStore.FindAsync(token, ct);
+        if (reference is not null && string.Equals(reference.ClientId, client.ClientId, StringComparison.Ordinal))
+        {
+            await referenceTokenStore.RemoveAsync(token, ct);
+            logger?.LogInformation("Reference access token revoked by client {ClientId} (subject {SubjectId})", client.ClientId, reference.SubjectId);
+            return Results.Ok();
+        }
+
         var rt = await refreshTokenStore.FindByTokenAsync(token, ct);
 
         // Only the client the token was issued to may revoke it. For any other client — or an
@@ -56,8 +69,7 @@ internal static class RevocationEndpoint
         if (rt is not null && string.Equals(rt.ClientId, client.ClientId, StringComparison.Ordinal))
         {
             await refreshTokenStore.ConsumeAsync(token, ct);
-            ctx.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("PulseAuth.RevocationEndpoint")
-                .LogInformation("Refresh token revoked by client {ClientId} (subject {SubjectId})", client.ClientId, rt.SubjectId);
+            logger?.LogInformation("Refresh token revoked by client {ClientId} (subject {SubjectId})", client.ClientId, rt.SubjectId);
         }
 
         return Results.Ok();

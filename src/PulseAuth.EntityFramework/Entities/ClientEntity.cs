@@ -74,6 +74,12 @@ public class ClientEntity
     /// </summary>
     public int IdentityTokenLifetime { get; set; } = 300;
 
+    /// <summary>Access token format: 0 = JWT (default), 1 = Reference (1.4.0+).</summary>
+    public int AccessTokenType { get; set; } = 0;
+
+    /// <summary>The client may introspect tokens issued to any client (1.4.0+).</summary>
+    public bool AllowIntrospection { get; set; } = false;
+
     // Navigation
     /// <summary>
     /// The collection of grant types that the client is allowed to use. This collection contains instances of ClientGrantTypeEntity, which represent the individual grant types (e.g., "authorization_code", "client_credentials", "refresh_token") that the client can use when making authorization requests. The authorization server will check this collection to determine if a client is authorized to use a specific grant type during the token request process. Clients must have at least one allowed grant type to be able to obtain access tokens from the authorization server.

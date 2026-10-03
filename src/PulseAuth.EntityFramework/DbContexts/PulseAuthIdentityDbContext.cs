@@ -83,6 +83,12 @@ public abstract class PulseAuthIdentityDbContext<TUser>
     /// <inheritdoc cref="IPulseAuthDbContext.RefreshTokens"/>
     public DbSet<RefreshTokenEntity>        RefreshTokens        { get; set; } = default!;
 
+    /// <summary>Reference (opaque) access tokens.</summary>
+    public DbSet<ReferenceTokenEntity>      ReferenceTokens      { get; set; } = default!;
+
+    /// <summary>User consents.</summary>
+    public DbSet<ConsentEntity>             Consents             { get; set; } = default!;
+
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder builder)
     {

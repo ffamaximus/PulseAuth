@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using PulseAuth.Abstractions;
 using PulseAuth.Configuration;
 using PulseAuth.Endpoints;
+using PulseAuth.Services;
 using PulseAuth.Validators;
 
 namespace PulseAuth.Extensions;
@@ -50,8 +51,9 @@ public static class EndpointRouteBuilderExtensions
             IOptions<PulseAuthOptions> opts,
             AuthorizeRequestValidator validator,
             IAuthorizationCodeStore codes,
+            IConsentStore consents,
             CancellationToken ct) =>
-            AuthorizeEndpoint.HandleAsync(ctx, opts, validator, codes, ct))
+            AuthorizeEndpoint.HandleAsync(ctx, opts, validator, codes, consents, ct))
            .WithName("PulseAuth.Authorize");
 
         // Token endpoint
@@ -61,8 +63,10 @@ public static class EndpointRouteBuilderExtensions
             ITokenService tokenSvc,
             IAuthorizationCodeStore codes,
             IRefreshTokenStore refreshTokens,
+            IReferenceTokenStore referenceTokens,
+            IUserAuthenticationService users,
             CancellationToken ct) =>
-            TokenEndpoint.HandleAsync(ctx, opts, validator, tokenSvc, codes, refreshTokens, ct))
+            TokenEndpoint.HandleAsync(ctx, opts, validator, tokenSvc, codes, refreshTokens, referenceTokens, users, ct))
            .AllowAnonymous()
            .WithCors(app, options, $"{prefix}/token", isPublic: false)
            .WithRateLimit(options)
@@ -71,10 +75,10 @@ public static class EndpointRouteBuilderExtensions
         // UserInfo endpoint
         app.MapGet($"{prefix}/userinfo", (HttpContext ctx,
             IOptions<PulseAuthOptions> opts,
-            IKeyMaterialService km,
+            AccessTokenValidator accessTokens,
             IUserAuthenticationService users,
             CancellationToken ct) =>
-            UserInfoEndpoint.HandleAsync(ctx, opts, km, users, ct))
+            UserInfoEndpoint.HandleAsync(ctx, opts, accessTokens, users, ct))
            .AllowAnonymous()
            .WithCors(app, options, $"{prefix}/userinfo", isPublic: false)
            .WithRateLimit(options)
@@ -84,21 +88,34 @@ public static class EndpointRouteBuilderExtensions
         app.MapPost($"{prefix}/revocation", (HttpContext ctx,
             IClientStore clients,
             IRefreshTokenStore refreshTokens,
+            IReferenceTokenStore referenceTokens,
             CancellationToken ct) =>
-            RevocationEndpoint.HandleAsync(ctx, clients, refreshTokens, ct))
+            RevocationEndpoint.HandleAsync(ctx, clients, refreshTokens, referenceTokens, ct))
            .AllowAnonymous()
            .WithCors(app, options, $"{prefix}/revocation", isPublic: false)
            .WithRateLimit(options)
            .WithName("PulseAuth.Revocation");
+
+        // Introspection endpoint (RFC 7662) — server-to-server, no CORS
+        app.MapPost($"{prefix}/introspect", (HttpContext ctx,
+            IClientStore clients,
+            AccessTokenValidator accessTokens,
+            IRefreshTokenStore refreshTokens,
+            CancellationToken ct) =>
+            IntrospectionEndpoint.HandleAsync(ctx, clients, accessTokens, refreshTokens, ct))
+           .AllowAnonymous()
+           .WithRateLimit(options)
+           .WithName("PulseAuth.Introspection");
 
         // End session (OIDC RP-Initiated Logout — GET and POST)
         app.MapMethods($"{prefix}/endsession", [HttpMethods.Get, HttpMethods.Post], (HttpContext ctx,
             IOptions<PulseAuthOptions> opts,
             IClientStore clients,
             IRefreshTokenStore refreshTokens,
+            IReferenceTokenStore referenceTokens,
             IKeyMaterialService km,
             CancellationToken ct) =>
-            EndSessionEndpoint.HandleAsync(ctx, opts, clients, refreshTokens, km, ct))
+            EndSessionEndpoint.HandleAsync(ctx, opts, clients, refreshTokens, referenceTokens, km, ct))
            .DisableAntiforgery()
            .WithName("PulseAuth.EndSession");
 

@@ -30,6 +30,12 @@ public sealed class PulseAuthTestHost : IAsyncDisposable
     public const string SpaOrigin      = "https://app.example";
     public const string ServiceClientId     = "svc";
     public const string ServiceClientSecret = "s3cret";
+    public const string ConsentClientId     = "consent-app";
+    public const string ConsentRedirectUri  = "https://consent.example/cb";
+    public const string ReferenceClientId     = "ref-app";
+    public const string ReferenceClientSecret = "ref-secret";
+    public const string ApiClientId     = "orders-api";
+    public const string ApiClientSecret = "api-secret";
 
     private readonly WebApplication _app;
 
@@ -53,6 +59,7 @@ public sealed class PulseAuthTestHost : IAsyncDisposable
 
         builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie();
         builder.Services.AddSingleton<BlockedUsers>();
+        builder.Services.AddSingleton<SecurityStamps>();
 
         builder.Services
             .AddPulseAuth(o =>
@@ -96,6 +103,30 @@ public sealed class PulseAuthTestHost : IAsyncDisposable
                     ClientId = "svc-public", ClientName = "svc-public",
                     AllowedGrantTypes = [GrantTypes.ClientCredentials], AllowedScopes = ["api"],
                 },
+                new Client
+                {
+                    ClientId = ConsentClientId, ClientName = "Third-party app",
+                    AllowedGrantTypes = [GrantTypes.AuthorizationCode, GrantTypes.RefreshToken],
+                    RedirectUris = [ConsentRedirectUri],
+                    AllowedScopes = ["openid", "profile", "offline_access"],
+                    AllowOfflineAccess = true,
+                    RequireConsent = true,
+                },
+                new Client
+                {
+                    ClientId = ReferenceClientId, ClientName = ReferenceClientId,
+                    ClientSecretHash = ClientSecretHelper.HashSecret(ReferenceClientSecret),
+                    AllowedGrantTypes = [GrantTypes.Password, GrantTypes.RefreshToken],
+                    AllowedScopes = ["openid", "profile", "offline_access", "api"],
+                    AllowOfflineAccess = true,
+                    AccessTokenType = AccessTokenType.Reference,
+                },
+                new Client
+                {
+                    ClientId = ApiClientId, ClientName = ApiClientId,
+                    ClientSecretHash = ClientSecretHelper.HashSecret(ApiClientSecret),
+                    AllowIntrospection = true,
+                },
             ]);
 
         var app = builder.Build();
@@ -105,6 +136,26 @@ public sealed class PulseAuthTestHost : IAsyncDisposable
             await ctx.SignInAsync(new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", sub)], "test")));
             return Results.Ok();
         });
+        // Minimal consent page API for tests (a real app renders a page + antiforgery)
+        app.MapGet("/Consent", async (string returnUrl, PulseAuth.Services.IConsentInteractionService consent) =>
+        {
+            var request = await consent.GetConsentRequestAsync(returnUrl);
+            return request is null ? Results.BadRequest() : Results.Ok(new { client = request.Client.ClientId, scopes = request.RequestedScopes });
+        });
+        app.MapPost("/Consent/grant", async (HttpContext ctx, string returnUrl, string? scopes, bool remember,
+            PulseAuth.Services.IConsentInteractionService consent) =>
+        {
+            var user = (await ctx.AuthenticateAsync()).Principal!;
+            var granted = scopes?.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            return Results.Ok(new { redirect = await consent.GrantConsentAsync(returnUrl, user, granted, remember) });
+        });
+        app.MapPost("/Consent/deny", async (string returnUrl, PulseAuth.Services.IConsentInteractionService consent)
+            => Results.Ok(new { redirect = await consent.DenyConsentAsync(returnUrl) }));
+        app.MapPost("/Consent/revoke", async (string clientId, PulseAuth.Services.IConsentInteractionService consent) =>
+        {
+            await consent.RevokeConsentAsync(FakeUserService.UserId, clientId);
+            return Results.Ok();
+        });
         app.MapPulseAuth();
 
         await app.StartAsync();
@@ -112,6 +163,9 @@ public sealed class PulseAuthTestHost : IAsyncDisposable
     }
 
     public string Issuer => BaseAddress.ToString().TrimEnd('/');
+
+    /// <summary>Simulates a password change ("sign out everywhere").</summary>
+    public void ChangeSecurityStamp(string subjectId) => _app.Services.GetRequiredService<SecurityStamps>().Change(subjectId);
 
     /// <summary>Marks a user as no longer active (deleted / locked out).</summary>
     public void BlockUser(string subjectId) => _app.Services.GetRequiredService<BlockedUsers>().Block(subjectId);

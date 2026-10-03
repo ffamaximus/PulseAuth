@@ -35,6 +35,7 @@ internal static class DiscoveryEndpoint
             JwksUri               = $"{baseUrl}/.well-known/jwks",
             EndSessionEndpoint    = $"{baseUrl}{prefix}/endsession",
             RevocationEndpoint    = $"{baseUrl}{prefix}/revocation",
+            IntrospectionEndpoint = $"{baseUrl}{prefix}/introspect",
             ScopesSupported       = options.SupportedScopes,
             IdTokenSigningAlgValuesSupported = [signing.Algorithm],
             CodeChallengeMethodsSupported    = options.AllowPlainPkce ? ["S256", "plain"] : ["S256"],

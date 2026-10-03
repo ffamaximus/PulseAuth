@@ -100,6 +100,8 @@ public class TokenRequestValidator
     private readonly TimeSpan _refreshTokenReuseGracePeriod;
     private readonly bool     _rotateRefreshTokens;
     private readonly ILogger? _logger;
+    private readonly IReferenceTokenStore? _referenceTokens;
+    private readonly bool _validateStamp;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="TokenRequestValidator"/> class.
@@ -111,9 +113,12 @@ public class TokenRequestValidator
         IUserAuthenticationService users,
         IEnumerable<IExternalTokenValidator> externalValidators,
         IOptions<PulseAuthOptions>? options = null,
-        ILogger<TokenRequestValidator>? logger = null)
+        ILogger<TokenRequestValidator>? logger = null,
+        IReferenceTokenStore? referenceTokens = null)
     {
-        _logger = logger;
+        _logger          = logger;
+        _referenceTokens = referenceTokens;
+        _validateStamp   = options?.Value.ValidateSecurityStampOnRefresh ?? true;
         _clients            = clients;
         _codes              = codes;
         _refreshTokens      = refreshTokens;
@@ -291,14 +296,37 @@ public class TokenRequestValidator
         // Deleted, disabled or locked-out users must not keep refreshing until the token expires.
         if (!await _users.IsActiveAsync(rt.SubjectId, ct))
         {
-            await _refreshTokens.RevokeBySubjectAsync(rt.SubjectId, rt.ClientId, ct);
+            await RevokeUserTokensAsync(rt, ct);
             _logger?.LogInformation(
-                "Refresh rejected: user {SubjectId} is no longer active; revoked their refresh tokens for client {ClientId}.",
+                "Refresh rejected: user {SubjectId} is no longer active; revoked their tokens for client {ClientId}.",
                 rt.SubjectId, rt.ClientId);
             return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "User is no longer active");
         }
 
+        // Password change, "sign out everywhere", 2FA reset... change the security stamp: every
+        // refresh token issued before that must stop working.
+        if (_validateStamp && rt.UserStamp is not null)
+        {
+            var currentStamp = await _users.GetSecurityStampAsync(rt.SubjectId, ct);
+            if (currentStamp is null ||
+                !string.Equals(RefreshToken.ComputeTokenId(currentStamp), rt.UserStamp, StringComparison.Ordinal))
+            {
+                await RevokeUserTokensAsync(rt, ct);
+                _logger?.LogInformation(
+                    "Refresh rejected: security stamp of user {SubjectId} changed; revoked their tokens for client {ClientId}.",
+                    rt.SubjectId, rt.ClientId);
+                return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "The user's credentials have changed; sign in again");
+            }
+        }
+
         return TokenValidationResult.SuccessRefresh(client, rt, reuseWithinGracePeriod: rt.IsConsumed);
+    }
+
+    private async Task RevokeUserTokensAsync(RefreshToken rt, CancellationToken ct)
+    {
+        await _refreshTokens.RevokeBySubjectAsync(rt.SubjectId, rt.ClientId, ct);
+        if (_referenceTokens is not null)
+            await _referenceTokens.RemoveBySubjectAsync(rt.SubjectId, rt.ClientId, ct);
     }
 
     /// <summary>

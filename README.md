@@ -602,8 +602,7 @@ POST protected by antiforgery and then does `LocalRedirect(returnUrl)` to finish
 `client_secret` for confidential clients) and only revokes tokens issued to that client
 (RFC 7009). JWT access tokens cannot be revoked — keep their lifetime short.
 
-**Consent.** `Client.RequireConsent` is reserved for a future consent screen and is **not enforced**
-in this version.
+**Consent.** See [Consent page](#consent-page-third-party-clients).
 
 ---
 
@@ -688,6 +687,87 @@ public class LoginModel : PageModel
     }
 }
 ```
+
+The authorize endpoint supports `prompt=none` (returns `login_required` / `consent_required` to the
+client instead of showing a page), `prompt=login` and `max_age` (force a new sign-in) and
+`prompt=consent`.
+
+---
+
+## Consent page (third-party clients)
+
+For clients you do not own, set `RequireConsent = true`. PulseAuth then redirects the user to
+`ConsentPath` (default `/Consent`) with a `returnUrl`, unless they already consented to all the
+requested scopes. Use `IConsentInteractionService` in that page:
+
+```csharp
+public class ConsentModel(IConsentInteractionService consent) : PageModel
+{
+    public ConsentRequest? Request { get; private set; }
+
+    public async Task<IActionResult> OnGetAsync(string returnUrl)
+    {
+        Request = await consent.GetConsentRequestAsync(returnUrl);   // validates returnUrl
+        return Request is null ? BadRequest() : Page();               // show Request.Client.ClientName, Request.RequestedScopes
+    }
+
+    // <form method="post"> (antiforgery is on by default for Razor Pages)
+    public async Task<IActionResult> OnPostAsync(string returnUrl, string button, string[] scopes, bool remember)
+        => Redirect(button == "allow"
+            ? await consent.GrantConsentAsync(returnUrl, User, scopes, remember)   // subset allowed; openid is kept
+            : await consent.DenyConsentAsync(returnUrl) ?? "/");                    // client receives access_denied
+}
+```
+
+`GetUserConsentsAsync` / `RevokeConsentAsync` let you build a "connected apps" page; revoking a
+consent also revokes that client's refresh and reference tokens. `RememberedConsentLifetime`
+limits how long a remembered consent lasts (default: until revoked).
+
+---
+
+## Reference tokens and introspection
+
+JWT access tokens cannot be revoked before they expire. For clients that need revocable tokens set
+`AccessTokenType = AccessTokenType.Reference`: the client receives an opaque handle and APIs validate
+it with the introspection endpoint (`/connect/introspect`, RFC 7662). Reference tokens are revoked by
+`/connect/revocation`, logout, consent revocation, blocked users and password changes.
+
+```csharp
+new Client { ClientId = "mobile-app", AccessTokenType = AccessTokenType.Reference, ... },
+
+// The API calling the introspection endpoint is a confidential client:
+new Client
+{
+    ClientId           = "orders-api",
+    ClientSecretHash   = ClientSecretHelper.HashSecret("api-secret"),
+    AllowIntrospection = true,   // may introspect tokens issued to any client
+},
+```
+
+In the API, any RFC 7662 handler works, e.g. `Duende.AspNetCore.Authentication.OAuth2Introspection`:
+
+```csharp
+builder.Services.AddAuthentication("token")
+    .AddOAuth2Introspection("token", o =>
+    {
+        o.Authority    = "https://auth.myapp.com";
+        o.ClientId     = "orders-api";
+        o.ClientSecret = "api-secret";
+    });
+```
+
+A client without `AllowIntrospection` can only introspect its own tokens; refresh tokens can only
+be introspected by the client they belong to.
+
+---
+
+## Password change and "sign out everywhere"
+
+Refresh tokens remember the user's security stamp (`IUserAuthenticationService.GetSecurityStampAsync`,
+implemented by `PulseAuth.Identity`). When it changes — password change/reset, e-mail or 2FA change,
+or `userManager.UpdateSecurityStampAsync(user)` for "sign out everywhere" — the next refresh is
+rejected and the user's refresh/reference tokens for that client are revoked
+(`ValidateSecurityStampOnRefresh`, default on). Tokens issued before 1.4.0 are not affected.
 
 ---
 

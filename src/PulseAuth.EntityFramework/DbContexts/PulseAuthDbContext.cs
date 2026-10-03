@@ -76,6 +76,12 @@ public class PulseAuthDbContext : DbContext, IPulseAuthDbContext
     /// </summary>
     public DbSet<RefreshTokenEntity>      RefreshTokens       { get; set; } = default!;
 
+    /// <summary>Reference (opaque) access tokens.</summary>
+    public DbSet<ReferenceTokenEntity>    ReferenceTokens     { get; set; } = default!;
+
+    /// <summary>User consents.</summary>
+    public DbSet<ConsentEntity>           Consents            { get; set; } = default!;
+
     /// <summary>
     /// Configures the entity relationships and indexes for the PulseAuthDbContext. This method is called by EF Core when the model is being created and allows you to specify how the entities are mapped to the database schema. In this implementation, we define unique indexes on certain properties (e.g., ClientId for ClientEntity, combination of ClientId and GrantType for ClientGrantTypeEntity) to ensure data integrity and optimize query performance. We also define indexes on properties that are commonly queried (e.g., SubjectId and ExpiresAt for AuthorizationCodeEntity and RefreshTokenEntity) to improve the efficiency of lookups during the authorization process. The relationships between entities (e.g., foreign keys) can also be configured here if needed, although in this implementation we rely on conventions for most of the relationships.
     /// </summary>

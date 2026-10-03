@@ -51,6 +51,15 @@ public class DiscoveryDocument
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? RevocationEndpoint { get; set; }
 
+    /// <summary>Token introspection endpoint (RFC 7662).</summary>
+    [JsonPropertyName("introspection_endpoint")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? IntrospectionEndpoint { get; set; }
+
+    /// <summary>Supported values of the prompt parameter.</summary>
+    [JsonPropertyName("prompt_values_supported")]
+    public IEnumerable<string> PromptValuesSupported { get; set; } = ["none", "login", "consent"];
+
     /// <summary>
     /// Response types supported by the authorization server. The default is "code", which means the Authorization Code flow is supported. If you want to support the Implicit flow (not recommended for new applications), you can include "id_token" and/or "token id_token" in this list and implement the necessary logic in your authorization endpoint to handle those response types.
     /// </summary>

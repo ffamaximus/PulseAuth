@@ -34,6 +34,15 @@ public interface IUserAuthenticationService
         => await GetUserByIdAsync(subjectId, ct) is not null;
 
     /// <summary>
+    /// Returns a value that changes whenever the user's credentials or sessions must be
+    /// invalidated (password change, "sign out everywhere", 2FA reset...), e.g. ASP.NET Core
+    /// Identity's SecurityStamp. Refresh tokens remember it and are rejected after it changes.
+    /// The default implementation returns null (feature disabled).
+    /// </summary>
+    Task<string?> GetSecurityStampAsync(string subjectId, CancellationToken ct = default)
+        => Task.FromResult<string?>(null);
+
+    /// <summary>
     /// Finds a user linked to an external provider identity (e.g. Google, GitHub).
     /// </summary>
     /// <param name="provider">Provider name ("Google", "GitHub", etc.).</param>

@@ -24,6 +24,8 @@ internal static class TokenEndpoint
         ITokenService              tokenService,
         IAuthorizationCodeStore    codeStore,
         IRefreshTokenStore         refreshTokenStore,
+        IReferenceTokenStore       referenceTokenStore,
+        IUserAuthenticationService users,
         CancellationToken          ct)
     {
         var options = optionsAccessor.Value;
@@ -128,6 +130,26 @@ internal static class TokenEndpoint
         }
 
         var accessToken = await tokenService.CreateAccessTokenAsync(subject, client.ClientId, scopes, accessTokenClaims, ct);
+        var accessTokenLifetime = client.AccessTokenLifetime > 0
+            ? client.AccessTokenLifetime
+            : options.DefaultAccessTokenLifetime;
+
+        // Reference tokens: the client receives an opaque handle; the JWT stays on the server and is
+        // exposed to APIs only through introspection, so the token can be revoked at any time.
+        if (client.AccessTokenType == AccessTokenType.Reference)
+        {
+            var handle = GenerateToken();
+            await referenceTokenStore.StoreAsync(new ReferenceToken
+            {
+                Handle    = handle,
+                ClientId  = client.ClientId,
+                SubjectId = subject,
+                Jwt       = accessToken,
+                CreatedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddSeconds(accessTokenLifetime),
+            }, ct);
+            accessToken = handle;
+        }
 
         // Create ID token for any user-facing grant (client_credentials has no user identity).
         // CreateIdTokenAsync returns null if openid scope is not present, so it's safe to call always.
@@ -167,6 +189,12 @@ internal static class TokenEndpoint
 
             if (newRefreshToken is null)
             {
+                // Remember the user's security stamp: if it changes (password change, "sign out
+                // everywhere"...), this refresh token stops working.
+                var stamp = options.ValidateSecurityStampOnRefresh
+                    ? await users.GetSecurityStampAsync(subject, ct)
+                    : null;
+
                 var rt = new RefreshToken
                 {
                     Token     = GenerateToken(),
@@ -176,6 +204,7 @@ internal static class TokenEndpoint
                     // Link rotations into a family (hash only — never the raw previous token)
                     // so reuse of an old token can revoke the whole chain.
                     PreviousTokenId = rotatedRefreshToken ? RefreshToken.ComputeTokenId(refreshToken) : null,
+                    UserStamp = stamp is null ? null : RefreshToken.ComputeTokenId(stamp),
                     CreatedAt = DateTime.UtcNow,
                     ExpiresAt = DateTime.UtcNow.AddSeconds(
                         client.RefreshTokenLifetime > 0
@@ -191,9 +220,7 @@ internal static class TokenEndpoint
         {
             AccessToken  = accessToken,
             TokenType    = "Bearer",
-            ExpiresIn    = client.AccessTokenLifetime > 0
-                               ? client.AccessTokenLifetime
-                               : options.DefaultAccessTokenLifetime,
+            ExpiresIn    = accessTokenLifetime,
             RefreshToken = newRefreshToken,
             IdToken      = idToken,
             Scope        = string.Join(" ", scopes),

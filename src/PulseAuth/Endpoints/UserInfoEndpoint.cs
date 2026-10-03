@@ -19,7 +19,7 @@ internal static class UserInfoEndpoint
     public static async Task<IResult> HandleAsync(
         HttpContext                   ctx,
         IOptions<PulseAuthOptions>    optionsAccessor,
-        IKeyMaterialService           keyMaterial,
+        AccessTokenValidator          accessTokens,
         IUserAuthenticationService    users,
         CancellationToken             ct)
     {
@@ -32,40 +32,16 @@ internal static class UserInfoEndpoint
 
         var token = authHeader["Bearer ".Length..].Trim();
 
-        // Validate the JWT
-        var validationKeys = await keyMaterial.GetValidationKeysAsync(ct);
-        var handler        = new JwtSecurityTokenHandler();
-
-        ClaimsPrincipal principal;
-        SecurityToken   validatedToken;
-        try
-        {
-            principal = handler.ValidateToken(token, new TokenValidationParameters
-            {
-                ValidIssuer          = options.Issuer,
-                ValidateIssuer       = true,
-                ValidateAudience     = false,
-                ValidateLifetime     = true,
-                IssuerSigningKeys    = validationKeys,
-                ClockSkew            = TimeSpan.FromSeconds(30),
-            }, out validatedToken);
-        }
-        catch (Exception ex) when (ex is SecurityTokenException or ArgumentException)
+        // Validate the access token (JWT or reference token). ID tokens are rejected.
+        var validation = await accessTokens.ValidateAsync(token, ct);
+        if (!validation.IsValid)
         {
             return Results.Json(
-                new { error = OAuthErrors.InvalidToken, error_description = "Token validation failed" },
+                new { error = OAuthErrors.InvalidToken, error_description = validation.Error },
                 statusCode: 401);
         }
 
-        // Only ACCESS tokens may call userinfo — never an ID token (token confusion).
-        // Current access tokens carry typ "at+jwt" (RFC 9068). Tokens issued by PulseAuth <= 1.2.x
-        // use "JWT"; they are recognised by the client_id claim, which ID tokens never contain.
-        if (!IsAccessToken(validatedToken))
-        {
-            return Results.Json(
-                new { error = OAuthErrors.InvalidToken, error_description = "An access token is required" },
-                statusCode: 401);
-        }
+        var principal = validation.Principal!;
 
         var subjectId = principal.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
                      ?? principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -116,18 +92,6 @@ internal static class UserInfoEndpoint
         }
 
         return Results.Ok(result);
-    }
-
-    private static bool IsAccessToken(SecurityToken token)
-    {
-        if (token is not JwtSecurityToken jwt)
-            return false;
-
-        if (string.Equals(jwt.Header.Typ, DefaultTokenService.AccessTokenType, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        // Legacy access tokens (typ "JWT"): identified by the client_id claim.
-        return jwt.Claims.Any(c => c.Type == "client_id");
     }
 
     private static void AddIfNotNull(Dictionary<string, object?> dict, string key, string? value)

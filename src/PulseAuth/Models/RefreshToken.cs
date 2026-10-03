@@ -34,6 +34,13 @@ public class RefreshToken
     public string? PreviousTokenId { get; set; }
 
     /// <summary>
+    /// Hash of the user's security stamp when the token was issued (see
+    /// <c>IUserAuthenticationService.GetSecurityStampAsync</c>). If the stamp changes — password
+    /// change, "sign out everywhere", 2FA reset — the token is rejected on the next refresh.
+    /// </summary>
+    public string? UserStamp { get; set; }
+
+    /// <summary>
     /// Stable, non-reversible identifier of a refresh token value: base64url(SHA-256(token)).
     /// Used to link rotations (<see cref="PreviousTokenId"/>) without storing secrets.
     /// </summary>

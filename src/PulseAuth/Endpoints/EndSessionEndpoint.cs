@@ -27,6 +27,7 @@ internal static class EndSessionEndpoint
         IOptions<PulseAuthOptions> optionsAccessor,
         IClientStore               clients,
         IRefreshTokenStore         refreshTokens,
+        IReferenceTokenStore       referenceTokens,
         IKeyMaterialService        keyMaterial,
         CancellationToken          ct)
     {
@@ -112,6 +113,7 @@ internal static class EndSessionEndpoint
                 !string.IsNullOrEmpty(subjectId) && !string.IsNullOrEmpty(clientId))
             {
                 await refreshTokens.RevokeBySubjectAsync(subjectId, clientId, ct);
+                await referenceTokens.RemoveBySubjectAsync(subjectId, clientId, ct);
             }
         }
 

@@ -6,7 +6,7 @@ using PulseAuth.Models;
 namespace PulseAuth.Tests.Infrastructure;
 
 /// <summary>In-memory user store for tests. User "alice" / password "pw".</summary>
-public sealed class FakeUserService(BlockedUsers blocked) : IUserAuthenticationService
+public sealed class FakeUserService(BlockedUsers blocked, SecurityStamps stamps) : IUserAuthenticationService
 {
     public const string UserId   = "alice";
     public const string Password = "pw";
@@ -34,6 +34,9 @@ public sealed class FakeUserService(BlockedUsers blocked) : IUserAuthenticationS
     public Task<bool> IsActiveAsync(string subjectId, CancellationToken ct = default)
         => Task.FromResult(subjectId == UserId && !blocked.Contains(subjectId));
 
+    public Task<string?> GetSecurityStampAsync(string subjectId, CancellationToken ct = default)
+        => Task.FromResult<string?>(subjectId == UserId ? stamps.Get(subjectId) : null);
+
     public Task<UserInfo?> FindByExternalProviderAsync(string provider, string externalId, CancellationToken ct = default)
         => Task.FromResult<UserInfo?>(Alice());
 
@@ -47,4 +50,12 @@ public sealed class BlockedUsers
     private readonly ConcurrentDictionary<string, bool> _users = new();
     public void Block(string subjectId) => _users[subjectId] = true;
     public bool Contains(string subjectId) => _users.ContainsKey(subjectId);
+}
+
+/// <summary>Per-test-host security stamps (change one to simulate a password change).</summary>
+public sealed class SecurityStamps
+{
+    private readonly ConcurrentDictionary<string, string> _stamps = new();
+    public string Get(string subjectId) => _stamps.GetOrAdd(subjectId, _ => Guid.NewGuid().ToString());
+    public void Change(string subjectId) => _stamps[subjectId] = Guid.NewGuid().ToString();
 }

@@ -129,6 +129,25 @@ public class PulseAuthOptions
     public bool EnableCors { get; set; } = true;
 
     /// <summary>
+    /// How long the answer to "is this origin allowed?" is cached by stores that support it
+    /// (EF store). Default: 1 minute. <see cref="TimeSpan.Zero"/> disables the cache.
+    /// </summary>
+    public TimeSpan CorsOriginCacheDuration { get; set; } = TimeSpan.FromMinutes(1);
+
+    /// <summary>
+    /// Rejects a refresh token (and revokes the user's tokens for that client) when the user's
+    /// security stamp changed since it was issued — e.g. after a password change.
+    /// Requires <c>IUserAuthenticationService.GetSecurityStampAsync</c> (implemented by PulseAuth.Identity).
+    /// Default: true.
+    /// </summary>
+    public bool ValidateSecurityStampOnRefresh { get; set; } = true;
+
+    /// <summary>
+    /// Lifetime of consents the user asked to remember. <c>null</c> (default) = until revoked.
+    /// </summary>
+    public TimeSpan? RememberedConsentLifetime { get; set; }
+
+    /// <summary>
     /// Scopes that are always included in the discovery document.
     /// </summary>
     public IList<string> SupportedScopes { get; set; } = ["openid", "profile", "email", "offline_access"];

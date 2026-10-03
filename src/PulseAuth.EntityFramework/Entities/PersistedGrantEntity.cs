@@ -91,4 +91,69 @@ public class RefreshTokenEntity : PersistedGrantEntity
     /// </summary>
     [MaxLength(256)]
     public string? PreviousTokenId { get; set; }
+
+    /// <summary>
+    /// SHA-256 of the user's security stamp when the token was issued (1.4.0+). If the stamp changes
+    /// (password change, "sign out everywhere"...) the token is rejected on the next refresh.
+    /// </summary>
+    [MaxLength(100)]
+    public string? UserStamp { get; set; }
+}
+
+/// <summary>
+/// A reference (opaque) access token (1.4.0+). <see cref="PersistedGrantEntity.Key"/> holds a hash of
+/// the handle; <see cref="Data"/> the signed JWT returned by introspection.
+/// </summary>
+[Table("PulseAuth_ReferenceTokens")]
+public class ReferenceTokenEntity
+{
+    /// <summary>Hashed handle (see GrantKeyHelper).</summary>
+    [Key, MaxLength(256)]
+    public string Key { get; set; } = default!;
+
+    /// <summary>Client the token was issued to.</summary>
+    [MaxLength(200)]
+    public string ClientId { get; set; } = default!;
+
+    /// <summary>Subject (user id or client id).</summary>
+    [MaxLength(200)]
+    public string SubjectId { get; set; } = default!;
+
+    /// <summary>The signed JWT (unbounded text).</summary>
+    public string Data { get; set; } = default!;
+
+    /// <summary>Creation time (UTC).</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Expiration time (UTC).</summary>
+    public DateTime ExpiresAt { get; set; }
+}
+
+/// <summary>A user's consent for a client (1.4.0+). One row per (SubjectId, ClientId).</summary>
+[Table("PulseAuth_Consents")]
+public class ConsentEntity
+{
+    /// <summary>Surrogate key.</summary>
+    public int Id { get; set; }
+
+    /// <summary>User id.</summary>
+    [MaxLength(200)]
+    public string SubjectId { get; set; } = default!;
+
+    /// <summary>Client id.</summary>
+    [MaxLength(200)]
+    public string ClientId { get; set; } = default!;
+
+    /// <summary>Granted scopes, space-delimited.</summary>
+    [MaxLength(2000)]
+    public string Scopes { get; set; } = default!;
+
+    /// <summary>When the consent was given (UTC).</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Expiration (UTC); null = until revoked.</summary>
+    public DateTime? ExpiresAt { get; set; }
+
+    /// <summary>False = one-time consent.</summary>
+    public bool Remember { get; set; } = true;
 }

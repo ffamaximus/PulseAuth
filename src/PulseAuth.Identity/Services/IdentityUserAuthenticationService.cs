@@ -69,6 +69,19 @@ public class IdentityUserAuthenticationService<TUser> : IUserAuthenticationServi
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Identity changes the security stamp on password change/reset, e-mail change, 2FA changes,
+    /// external login removal and <c>UserManager.UpdateSecurityStampAsync</c> ("sign out everywhere").
+    /// </remarks>
+    public async Task<string?> GetSecurityStampAsync(string subjectId, CancellationToken ct = default)
+    {
+        var user = await _userManager.FindByIdAsync(subjectId);
+        return user is null || !_userManager.SupportsUserSecurityStamp
+            ? null
+            : await _userManager.GetSecurityStampAsync(user);
+    }
+
+    /// <inheritdoc />
     public async Task<UserInfo?> FindByExternalProviderAsync(
         string provider, string externalId, CancellationToken ct = default)
     {

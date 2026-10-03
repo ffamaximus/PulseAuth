@@ -55,5 +55,14 @@ internal static class PulseAuthModelConfiguration
             e.HasIndex(x => new { x.SubjectId, x.ClientId });
             e.HasIndex(x => x.ExpiresAt);
         });
+
+        builder.Entity<ReferenceTokenEntity>(e =>
+        {
+            e.HasIndex(x => new { x.SubjectId, x.ClientId });
+            e.HasIndex(x => x.ExpiresAt);
+        });
+
+        builder.Entity<ConsentEntity>(e =>
+            e.HasIndex(x => new { x.SubjectId, x.ClientId }).IsUnique());
     }
 }

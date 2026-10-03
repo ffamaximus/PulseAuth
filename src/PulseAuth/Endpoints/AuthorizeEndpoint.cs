@@ -21,6 +21,7 @@ internal static class AuthorizeEndpoint
         IOptions<PulseAuthOptions>   optionsAccessor,
         AuthorizeRequestValidator    validator,
         IAuthorizationCodeStore      codeStore,
+        IConsentStore                consentStore,
         CancellationToken            ct)
     {
         var options = optionsAccessor.Value;
@@ -34,6 +35,10 @@ internal static class AuthorizeEndpoint
         var codeChallenge      = q["code_challenge"].ToString();
         var codeChallengeMethod = q["code_challenge_method"].ToString();
         var nonce              = q["nonce"].ToString();
+        var prompt             = q["prompt"].ToString()
+                                   .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                                   .ToHashSet(StringComparer.Ordinal);
+        var maxAgeParam        = q["max_age"].ToString();
 
         // 1. Validate the request parameters
         var validation = await validator.ValidateAsync(
@@ -46,21 +51,63 @@ internal static class AuthorizeEndpoint
         var client           = validation.Client!;
         var trustedRedirect  = validation.ValidatedRedirectUri!;
 
-        // 2. Ensure the user is authenticated
-        var authResult = await ctx.AuthenticateAsync();
-        if (!authResult.Succeeded || authResult.Principal is null)
+        // OIDC Core §3.1.2.1: "none" must not be combined with any other prompt value.
+        if (prompt.Contains("none") && prompt.Count > 1)
+            return BuildErrorResponse(trustedRedirect, state, Constants.OAuthErrors.InvalidRequest, "prompt=none cannot be combined with other values");
+
+        int? maxAge = null;
+        if (!string.IsNullOrEmpty(maxAgeParam))
         {
-            // Redirect to login page, passing back the full authorize URL as returnUrl
-            var returnUrl = ctx.Request.Path + ctx.Request.QueryString;
-            var loginUrl  = $"{options.LoginPath}?returnUrl={Uri.EscapeDataString(returnUrl)}";
-            return Results.Redirect(loginUrl);
+            if (!int.TryParse(maxAgeParam, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+                return BuildErrorResponse(trustedRedirect, state, Constants.OAuthErrors.InvalidRequest, "max_age must be a non-negative integer");
+            maxAge = parsed;
         }
 
-        var subjectId = authResult.Principal.FindFirst("sub")?.Value
+        // 2. Ensure the user is authenticated (prompt=login / max_age force a new authentication)
+        var authResult    = await ctx.AuthenticateAsync();
+        var authenticated = authResult.Succeeded && authResult.Principal is not null;
+        var authTooOld    = authenticated && maxAge is not null &&
+                            authResult.Properties?.IssuedUtc is { } issued &&
+                            DateTimeOffset.UtcNow - issued > TimeSpan.FromSeconds(maxAge.Value);
+
+        if (!authenticated || prompt.Contains("login") || authTooOld)
+        {
+            if (prompt.Contains("none"))
+                return BuildErrorResponse(trustedRedirect, state, "login_required", "The user must sign in");
+
+            // returnUrl without prompt=login / max_age, otherwise the user would loop forever
+            var returnUrl = BuildReturnUrl(ctx, removePrompt: "login", removeMaxAge: true);
+            return Results.Redirect(QueryHelpers.AddQueryString(options.LoginPath, "returnUrl", returnUrl));
+        }
+
+        var subjectId = authResult.Principal!.FindFirst("sub")?.Value
                      ?? authResult.Principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
         if (string.IsNullOrEmpty(subjectId))
             return BuildErrorResponse(trustedRedirect, state, "server_error", "Could not determine user identity");
+
+        // 2b. Consent (clients with RequireConsent)
+        if (client.RequireConsent)
+        {
+            var consent = await consentStore.GetAsync(subjectId, client.ClientId, ct);
+            var hasConsent = consent is not null &&
+                             consent.IsValid(DateTime.UtcNow) &&
+                             consent.Covers(validation.RequestedScopes) &&
+                             !prompt.Contains("consent");
+
+            if (!hasConsent)
+            {
+                if (prompt.Contains("none"))
+                    return BuildErrorResponse(trustedRedirect, state, "consent_required", "The user must consent");
+
+                var returnUrl = BuildReturnUrl(ctx, removePrompt: "consent", removeMaxAge: false);
+                return Results.Redirect(QueryHelpers.AddQueryString(options.ConsentPath, "returnUrl", returnUrl));
+            }
+
+            // "Allow this time only" consents are used once.
+            if (!consent!.Remember)
+                await consentStore.RemoveAsync(subjectId, client.ClientId, ct);
+        }
 
         // 3. Issue authorization code
         var authCode = new AuthorizationCode
@@ -107,6 +154,35 @@ internal static class AuthorizeEndpoint
             parameters["state"] = state;
 
         return Results.Redirect(QueryHelpers.AddQueryString(validatedRedirectUri, parameters));
+    }
+
+    /// <summary>
+    /// The current authorize URL (local path + query) without the given prompt value and,
+    /// optionally, without max_age — used as returnUrl for the login / consent pages.
+    /// </summary>
+    private static string BuildReturnUrl(HttpContext ctx, string removePrompt, bool removeMaxAge)
+    {
+        var parameters = new List<KeyValuePair<string, string?>>();
+        foreach (var (key, values) in ctx.Request.Query)
+        {
+            if (removeMaxAge && key == "max_age")
+                continue;
+
+            if (key == "prompt")
+            {
+                var remaining = string.Join(' ', values.ToString()
+                    .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                    .Where(v => v != removePrompt));
+                if (remaining.Length > 0)
+                    parameters.Add(new(key, remaining));
+                continue;
+            }
+
+            foreach (var value in values)
+                parameters.Add(new(key, value));
+        }
+
+        return QueryHelpers.AddQueryString((ctx.Request.PathBase + ctx.Request.Path).ToString(), parameters);
     }
 
     private static string GenerateCode()

@@ -52,6 +52,12 @@ public interface IPulseAuthDbContext
     /// </summary>
     DbSet<RefreshTokenEntity> RefreshTokens { get; }
 
+    /// <summary>Reference (opaque) access tokens (1.4.0+).</summary>
+    DbSet<ReferenceTokenEntity> ReferenceTokens { get; }
+
+    /// <summary>User consents (1.4.0+).</summary>
+    DbSet<ConsentEntity> Consents { get; }
+
     /// <summary>
     /// Saves all changes made in this context to the database. This method is used to persist any modifications made to the entities tracked by the context, such as adding new clients, updating existing client configurations, storing authorization codes, or managing refresh tokens. The method returns the number of state entries written to the database, which can be used to confirm that the expected changes were successfully saved. It also accepts a CancellationToken to allow for cancellation of the save operation if needed, which can be useful in scenarios where the operation may take a long time or when the application is shutting down.
     /// </summary>

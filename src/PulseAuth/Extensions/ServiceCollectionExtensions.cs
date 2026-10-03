@@ -46,6 +46,12 @@ public static class ServiceCollectionExtensions
         // Default stores (in-memory — overridable)
         services.TryAddSingleton<IAuthorizationCodeStore, InMemoryAuthorizationCodeStore>();
         services.TryAddSingleton<IRefreshTokenStore,      InMemoryRefreshTokenStore>();
+        services.TryAddSingleton<IReferenceTokenStore,    InMemoryReferenceTokenStore>();
+        services.TryAddSingleton<IConsentStore,           InMemoryConsentStore>();
+
+        // Access token validation (userinfo, introspection) and consent page API
+        services.TryAddScoped<AccessTokenValidator>();
+        services.TryAddScoped<IConsentInteractionService, ConsentInteractionService>();
 
         // Default token service
         services.TryAddScoped<ITokenService, DefaultTokenService>();
