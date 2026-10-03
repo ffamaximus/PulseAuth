@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using PulseAuth.Abstractions;
 using PulseAuth.EntityFramework.Abstractions;
 using PulseAuth.EntityFramework.Entities;
+using PulseAuth.Helpers;
 using PulseAuth.Models;
 
 namespace PulseAuth.EntityFramework.Stores;
@@ -29,7 +30,8 @@ public class EfAuthorizationCodeStore : IAuthorizationCodeStore
     {
         _db.AuthorizationCodes.Add(new AuthorizationCodeEntity
         {
-            Key                 = code.Code,
+            // Only a SHA-256 of the code is persisted (see GrantKeyHelper).
+            Key                 = GrantKeyHelper.ToStorageKey(code.Code),
             ClientId            = code.ClientId,
             SubjectId           = code.SubjectId,
             Scopes              = string.Join(" ", code.Scopes),
@@ -52,15 +54,16 @@ public class EfAuthorizationCodeStore : IAuthorizationCodeStore
     /// <returns></returns>
     public async Task<AuthorizationCode?> FindByCodeAsync(string code, CancellationToken ct = default)
     {
+        var (hashed, legacy) = GrantKeyHelper.LegacyCandidates(code);
         var e = await _db.AuthorizationCodes
             .AsNoTracking()
-            .FirstOrDefaultAsync(c => c.Key == code, ct);
+            .FirstOrDefaultAsync(c => c.Key == hashed || c.Key == legacy, ct);
 
         if (e is null) return null;
 
         return new AuthorizationCode
         {
-            Code                = e.Key,
+            Code                = code,
             ClientId            = e.ClientId,
             SubjectId           = e.SubjectId,
             Scopes              = e.Scopes.Split(' ', StringSplitOptions.RemoveEmptyEntries),
@@ -83,8 +86,9 @@ public class EfAuthorizationCodeStore : IAuthorizationCodeStore
     /// <returns></returns>
     public async Task ConsumeAsync(string code, CancellationToken ct = default)
     {
+        var (hashed, legacy) = GrantKeyHelper.LegacyCandidates(code);
         await _db.AuthorizationCodes
-            .Where(c => c.Key == code)
+            .Where(c => c.Key == hashed || c.Key == legacy)
             .ExecuteUpdateAsync(s => s.SetProperty(c => c.IsConsumed, true), ct);
     }
 
@@ -95,8 +99,9 @@ public class EfAuthorizationCodeStore : IAuthorizationCodeStore
     /// </summary>
     public async Task<bool> TryConsumeAsync(string code, CancellationToken ct = default)
     {
+        var (hashed, legacy) = GrantKeyHelper.LegacyCandidates(code);
         var affected = await _db.AuthorizationCodes
-            .Where(c => c.Key == code && !c.IsConsumed)
+            .Where(c => (c.Key == hashed || c.Key == legacy) && !c.IsConsumed)
             .ExecuteUpdateAsync(s => s.SetProperty(c => c.IsConsumed, true), ct);
 
         return affected == 1;

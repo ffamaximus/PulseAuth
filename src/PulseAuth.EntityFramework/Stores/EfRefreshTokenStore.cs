@@ -1,7 +1,10 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using PulseAuth.Abstractions;
+using PulseAuth.Configuration;
 using PulseAuth.EntityFramework.Abstractions;
 using PulseAuth.EntityFramework.Entities;
+using PulseAuth.Helpers;
 using PulseAuth.Models;
 
 namespace PulseAuth.EntityFramework.Stores;
@@ -12,12 +15,18 @@ namespace PulseAuth.EntityFramework.Stores;
 public class EfRefreshTokenStore : IRefreshTokenStore
 {
     private readonly IPulseAuthDbContext _db;
+    private readonly TimeSpan _consumedRetention;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="EfRefreshTokenStore"/> class with the specified database context.
     /// </summary>
     /// <param name="db"></param>
-    public EfRefreshTokenStore(IPulseAuthDbContext db) => _db = db ?? throw new ArgumentNullException(nameof(db));
+    /// <param name="options">PulseAuth options (consumed token retention).</param>
+    public EfRefreshTokenStore(IPulseAuthDbContext db, IOptions<PulseAuthOptions>? options = null)
+    {
+        _db                = db ?? throw new ArgumentNullException(nameof(db));
+        _consumedRetention = options?.Value.ConsumedRefreshTokenRetention ?? TimeSpan.FromDays(7);
+    }
 
     /// <summary>
     /// Stores a new refresh token in the database. This method takes a <see cref="RefreshToken"/> object as input and creates a corresponding <see cref="RefreshTokenEntity"/> to be saved in the database. The properties of the refresh token, such as the token string, client ID, subject ID, scopes, creation time, expiration time, and previous token ID (if any), are mapped to the entity before being added to the database context. After adding the new entity, the method calls DbContext.SaveChangesAsync to persist the changes to the database. This allows the application to keep track of issued refresh tokens and manage their lifecycle effectively.
@@ -29,7 +38,8 @@ public class EfRefreshTokenStore : IRefreshTokenStore
     {
         _db.RefreshTokens.Add(new RefreshTokenEntity
         {
-            Key             = token.Token,
+            // Only a SHA-256 of the token is persisted (see GrantKeyHelper).
+            Key             = GrantKeyHelper.ToStorageKey(token.Token),
             ClientId        = token.ClientId,
             SubjectId       = token.SubjectId,
             Scopes          = string.Join(" ", token.Scopes),
@@ -48,15 +58,16 @@ public class EfRefreshTokenStore : IRefreshTokenStore
     /// <returns></returns>
     public async Task<RefreshToken?> FindByTokenAsync(string token, CancellationToken ct = default)
     {
+        var (hashed, legacy) = GrantKeyHelper.LegacyCandidates(token);
         var e = await _db.RefreshTokens
             .AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Key == token, ct);
+            .FirstOrDefaultAsync(t => t.Key == hashed || t.Key == legacy, ct);
 
         if (e is null) return null;
 
         return new RefreshToken
         {
-            Token           = e.Key,
+            Token           = token,
             ClientId        = e.ClientId,
             SubjectId       = e.SubjectId,
             Scopes          = e.Scopes.Split(' ', StringSplitOptions.RemoveEmptyEntries),
@@ -76,8 +87,9 @@ public class EfRefreshTokenStore : IRefreshTokenStore
     public async Task ConsumeAsync(string token, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
+        var (hashed, legacy) = GrantKeyHelper.LegacyCandidates(token);
         await _db.RefreshTokens
-            .Where(t => t.Key == token)
+            .Where(t => t.Key == hashed || t.Key == legacy)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(t => t.IsConsumed, true)
                 // Revoked tokens must never fall inside the rotation reuse grace window.
@@ -92,12 +104,13 @@ public class EfRefreshTokenStore : IRefreshTokenStore
     public async Task<bool> TryConsumeAsync(string token, TimeSpan reuseGracePeriod, CancellationToken ct = default)
     {
         int affected;
+        var (hashed, legacy) = GrantKeyHelper.LegacyCandidates(token);
         if (reuseGracePeriod > TimeSpan.Zero)
         {
             // Record the rotation time in ExpiresAt (no schema change needed).
             var graceUntil = DateTime.UtcNow.Add(reuseGracePeriod);
             affected = await _db.RefreshTokens
-                .Where(t => t.Key == token && !t.IsConsumed)
+                .Where(t => (t.Key == hashed || t.Key == legacy) && !t.IsConsumed)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(t => t.IsConsumed, true)
                     .SetProperty(t => t.ExpiresAt, graceUntil), ct);
@@ -105,7 +118,7 @@ public class EfRefreshTokenStore : IRefreshTokenStore
         else
         {
             affected = await _db.RefreshTokens
-                .Where(t => t.Key == token && !t.IsConsumed)
+                .Where(t => (t.Key == hashed || t.Key == legacy) && !t.IsConsumed)
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.IsConsumed, true), ct);
         }
 
@@ -137,9 +150,47 @@ public class EfRefreshTokenStore : IRefreshTokenStore
     /// <returns></returns>
     public async Task RemoveExpiredAsync(CancellationToken ct = default)
     {
-        var cutoff = DateTime.UtcNow;
+        // Consumed tokens are kept for ConsumedRefreshTokenRetention so that a replay is
+        // still detected as reuse (and revokes the family) instead of looking unknown.
+        var cutoff         = DateTime.UtcNow;
+        var consumedCutoff = cutoff - _consumedRetention;
         await _db.RefreshTokens
-            .Where(t => t.ExpiresAt < cutoff || t.IsConsumed)
+            .Where(t => (!t.IsConsumed && t.ExpiresAt < cutoff) ||
+                        (t.IsConsumed && t.ExpiresAt < consumedCutoff))
             .ExecuteDeleteAsync(ct);
+    }
+
+    /// <summary>
+    /// Revokes the whole rotation family of a reused refresh token (ancestors, descendants
+    /// and grace-period forks). Uses the existing (SubjectId, ClientId) index — no schema change.
+    /// </summary>
+    public async Task<int> RevokeFamilyAsync(RefreshToken reusedToken, CancellationToken ct = default)
+    {
+        var candidates = await _db.RefreshTokens
+            .AsNoTracking()
+            .Where(t => t.SubjectId == reusedToken.SubjectId && t.ClientId == reusedToken.ClientId)
+            .Select(t => new { t.Key, t.PreviousTokenId })
+            .ToListAsync(ct);
+
+        // The reused row may be stored hashed (current) or raw (rows from PulseAuth <= 1.2.x).
+        var (hashed, legacy) = GrantKeyHelper.LegacyCandidates(reusedToken.Token);
+        var reusedKey = candidates.Any(c => c.Key == legacy) ? legacy : hashed;
+
+        var family = RefreshTokenFamily.Resolve(
+                candidates.Select(c => (c.Key, c.PreviousTokenId)), reusedKey)
+            .ToList();
+
+        var now     = DateTime.UtcNow;
+        var revoked = 0;
+        foreach (var chunk in family.Chunk(500))
+        {
+            revoked += await _db.RefreshTokens
+                .Where(t => chunk.Contains(t.Key) && (!t.IsConsumed || t.ExpiresAt > now))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.IsConsumed, true)
+                    .SetProperty(t => t.ExpiresAt, t => t.ExpiresAt > now ? now : t.ExpiresAt), ct);
+        }
+
+        return revoked;
     }
 }

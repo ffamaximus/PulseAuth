@@ -444,10 +444,22 @@ Refresh tokens are rotated on every use (`RotateRefreshTokens = true`): always s
 in several tabs — or a retry after a network error do not log the user out. Each request inside the
 window gets its own new refresh token. Revoked tokens never benefit from the grace period.
 
+**Reuse detection.** If a rotated refresh token is presented again *after* the grace period, PulseAuth
+assumes it was stolen (RFC 9700 §4.14.2): the request is rejected and the **whole rotation family** is
+revoked — the reused token, every token derived from it and any grace-period forks — so both the
+attacker and the legitimate client must sign in again. Other sessions of the same user are not
+affected. A warning is logged (`Refresh token reuse detected ...`).
+
+Consumed tokens are kept by `RemoveExpiredAsync` for `ConsumedRefreshTokenRetention` (default
+**7 days**) so replays within that period are detected; afterwards they are rejected as unknown.
+No database migration is required (families are linked through the existing `PreviousTokenId`
+column, which stores a SHA-256 of the previous token, never the token itself).
+
 ```csharp
 .AddPulseAuth(opts =>
 {
-    opts.RefreshTokenReuseGracePeriod = TimeSpan.FromSeconds(10); // TimeSpan.Zero = strict one-time use
+    opts.RefreshTokenReuseGracePeriod  = TimeSpan.FromSeconds(10); // TimeSpan.Zero = strict one-time use
+    opts.ConsumedRefreshTokenRetention = TimeSpan.FromDays(7);     // reuse-detection window
 })
 ```
 
@@ -569,6 +581,16 @@ app.MapGet("/orders", (ClaimsPrincipal user) => ...)
 
 The microservice fetches public keys from `/.well-known/jwks` automatically and caches them. No shared secrets, no extra dependencies beyond `Microsoft.AspNetCore.Authentication.JwtBearer`.
 
+Access tokens carry the JOSE header `typ: at+jwt` (RFC 9068). To make sure an API never accepts an
+ID token as a bearer token, you can enforce it:
+
+```csharp
+opts.TokenValidationParameters.ValidTypes = ["at+jwt"];
+```
+
+User claims (e.g. rows in `AspNetUserClaims`) can never override protocol claims such as `sub`,
+`scope`, `client_id`, `aud` or `iss` — they are dropped when tokens are issued.
+
 ---
 
 ## Custom user store
@@ -583,6 +605,9 @@ public class MyUserService : IUserAuthenticationService
     public Task<UserInfo?> FindByExternalProviderAsync(string provider, string externalId, CancellationToken ct) { ... }
     public Task<UserInfo>  AutoProvisionUserAsync(string provider, string externalId,
                                IEnumerable<Claim> claims, CancellationToken ct) { ... }
+
+    // Optional (recommended): checked on every refresh. Default = "user exists".
+    public Task<bool> IsActiveAsync(string subjectId, CancellationToken ct) { ... } // e.g. !user.IsDisabled
 }
 
 // Register instead of .AddIdentityUsers<T>():

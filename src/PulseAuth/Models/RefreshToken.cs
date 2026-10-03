@@ -26,8 +26,22 @@ public class RefreshToken
     /// <summary>Whether this token has been consumed (one-time-use rotation).</summary>
     public bool IsConsumed { get; set; }
 
-    /// <summary>The token that was consumed to create this one (for rotation chain).</summary>
+    /// <summary>
+    /// Id of the refresh token that was rotated to create this one
+    /// (<see cref="ComputeTokenId"/> of the previous token — never the raw value).
+    /// Links rotations into a family so reuse of an old token can revoke the whole chain.
+    /// </summary>
     public string? PreviousTokenId { get; set; }
+
+    /// <summary>
+    /// Stable, non-reversible identifier of a refresh token value: base64url(SHA-256(token)).
+    /// Used to link rotations (<see cref="PreviousTokenId"/>) without storing secrets.
+    /// </summary>
+    public static string ComputeTokenId(string token)
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token));
+        return Convert.ToBase64String(hash).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    }
 
     /// <summary>
     /// True when the token was consumed by rotation less than <paramref name="gracePeriod"/> ago,

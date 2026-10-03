@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PulseAuth.Abstractions;
 using PulseAuth.Configuration;
@@ -82,6 +83,8 @@ public class TokenRequestValidator
     private readonly IReadOnlyList<IExternalTokenValidator> _externalValidators;
 
     private readonly TimeSpan _refreshTokenReuseGracePeriod;
+    private readonly bool     _rotateRefreshTokens;
+    private readonly ILogger? _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="TokenRequestValidator"/> class.
@@ -92,8 +95,10 @@ public class TokenRequestValidator
         IRefreshTokenStore refreshTokens,
         IUserAuthenticationService users,
         IEnumerable<IExternalTokenValidator> externalValidators,
-        IOptions<PulseAuthOptions>? options = null)
+        IOptions<PulseAuthOptions>? options = null,
+        ILogger<TokenRequestValidator>? logger = null)
     {
+        _logger = logger;
         _clients            = clients;
         _codes              = codes;
         _refreshTokens      = refreshTokens;
@@ -101,6 +106,7 @@ public class TokenRequestValidator
         _externalValidators = externalValidators.ToList().AsReadOnly();
 
         var opts = options?.Value;
+        _rotateRefreshTokens = opts?.RotateRefreshTokens ?? true;
         _refreshTokenReuseGracePeriod = opts is { RotateRefreshTokens: true }
             ? opts.RefreshTokenReuseGracePeriod
             : TimeSpan.Zero;
@@ -145,6 +151,12 @@ public class TokenRequestValidator
 
         if (!client.AllowedGrantTypes.Contains(grantType))
             return TokenValidationResult.Fail(OAuthErrors.UnsupportedGrantType, $"Grant type '{grantType}' is not allowed for this client");
+
+        // client_credentials authenticates the CLIENT itself: a public client (no secret) would let
+        // anyone who knows the client_id mint tokens. Require a confidential client (RFC 6749 §4.4).
+        if (grantType == GrantTypes.ClientCredentials && string.IsNullOrEmpty(client.ClientSecretHash))
+            return TokenValidationResult.Fail(OAuthErrors.UnauthorizedClient,
+                "client_credentials requires a confidential client (configure ClientSecretHash)");
 
         // Check registered social / external token-exchange validators first
         var externalValidator = _externalValidators.FirstOrDefault(v => v.SupportedGrantType == grantType);
@@ -218,6 +230,10 @@ public class TokenRequestValidator
         if (invalidScopes.Count > 0)
             return Task.FromResult(TokenValidationResult.Fail(OAuthErrors.InvalidScope, $"Scope(s) not allowed: {string.Join(", ", invalidScopes)}"));
 
+        // No refresh tokens for client_credentials (RFC 6749 §4.4.3): the client can always
+        // request a new access token with its own credentials.
+        requestedScopes.Remove(StandardScopes.OfflineAccess);
+
         // client_id is both client and subject for client credentials
         return Task.FromResult(TokenValidationResult.Success(client, client.ClientId, requestedScopes.AsReadOnly()));
     }
@@ -238,7 +254,14 @@ public class TokenRequestValidator
         // A rotated token is still accepted for a short grace period (concurrent tabs,
         // retries). The token endpoint then issues a new refresh token without consuming again.
         if (rt.IsConsumed && !rt.IsWithinReuseGracePeriod(_refreshTokenReuseGracePeriod, DateTime.UtcNow))
+        {
+            // Reuse of a rotated token outside the grace window: either the legitimate client
+            // or an attacker holds a stolen copy. Revoke the whole family (RFC 9700 §4.14.2).
+            if (_rotateRefreshTokens)
+                await HandleRefreshTokenReuseAsync(_refreshTokens, rt, client.ClientId, _logger, ct);
+
             return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "Refresh token has already been used");
+        }
 
         if (rt.ExpiresAt < DateTime.UtcNow)
             return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "Refresh token has expired");
@@ -246,7 +269,40 @@ public class TokenRequestValidator
         if (!string.Equals(rt.ClientId, client.ClientId, StringComparison.Ordinal))
             return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "Refresh token was not issued to this client");
 
+        // The client may have lost offline access since the token was issued.
+        if (!client.AllowOfflineAccess)
+            return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "Client is no longer allowed to use refresh tokens");
+
+        // Deleted, disabled or locked-out users must not keep refreshing until the token expires.
+        if (!await _users.IsActiveAsync(rt.SubjectId, ct))
+        {
+            await _refreshTokens.RevokeBySubjectAsync(rt.SubjectId, rt.ClientId, ct);
+            _logger?.LogInformation(
+                "Refresh rejected: user {SubjectId} is no longer active; revoked their refresh tokens for client {ClientId}.",
+                rt.SubjectId, rt.ClientId);
+            return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "User is no longer active");
+        }
+
         return TokenValidationResult.Success(client, rt.SubjectId, rt.Scopes.ToList().AsReadOnly(), rt: rt);
+    }
+
+    /// <summary>
+    /// Revokes the rotation family of a reused refresh token and logs a security event.
+    /// </summary>
+    internal static async Task HandleRefreshTokenReuseAsync(
+        IRefreshTokenStore store,
+        RefreshToken reusedToken,
+        string presentingClientId,
+        ILogger? logger,
+        CancellationToken ct)
+    {
+        var revoked = await store.RevokeFamilyAsync(reusedToken, ct);
+
+        logger?.LogWarning(
+            "Refresh token reuse detected (subject {SubjectId}, client {ClientId}, presented by client {PresentingClientId}). " +
+            "Revoked {RevokedCount} token(s) of the rotation family; the user must sign in again.",
+            reusedToken.SubjectId, reusedToken.ClientId, presentingClientId,
+            revoked >= 0 ? revoked.ToString() : "all (subject + client)");
     }
 
     // ── Resource Owner Password (legacy) ─────────────────────────────────────
@@ -264,6 +320,7 @@ public class TokenRequestValidator
         var requestedScopes = (scope ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries)
                                            .Where(s => client.AllowedScopes.Contains(s))
                                            .ToList();
+        ApplyOfflineAccessPolicy(client, requestedScopes);
 
         return TokenValidationResult.Success(client, user.SubjectId, requestedScopes.AsReadOnly());
     }
@@ -300,8 +357,19 @@ public class TokenRequestValidator
             requestedScopes = client.AllowedScopes
                                     .Where(s => s != StandardScopes.OfflineAccess)
                                     .ToList();
+        ApplyOfflineAccessPolicy(client, requestedScopes);
 
         return TokenValidationResult.Success(client, user.SubjectId, requestedScopes.AsReadOnly());
+    }
+
+    /// <summary>
+    /// offline_access (= a refresh token) is only granted to clients with
+    /// <see cref="Client.AllowOfflineAccess"/>, consistently with the authorize endpoint.
+    /// </summary>
+    private static void ApplyOfflineAccessPolicy(Client client, List<string> scopes)
+    {
+        if (!client.AllowOfflineAccess)
+            scopes.Remove(StandardScopes.OfflineAccess);
     }
 
     private static IEnumerable<Claim> BuildExternalClaims(ExternalIdentity identity)

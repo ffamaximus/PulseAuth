@@ -59,7 +59,7 @@ public class DefaultTokenService : ITokenService
         // Returns null for client_credentials (subjectId = clientId, no matching user).
         var user = await _users.GetUserByIdAsync(subjectId, ct);
         if (user?.AdditionalClaims is { Count: > 0 })
-            claims.AddRange(user.AdditionalClaims);
+            claims.AddRange(WithoutReservedClaims(user.AdditionalClaims));
 
         if (additionalClaims is not null)
             claims.AddRange(additionalClaims);
@@ -71,6 +71,10 @@ public class DefaultTokenService : ITokenService
             notBefore:          now,
             expires:            now.AddSeconds(_options.DefaultAccessTokenLifetime),
             signingCredentials: credentials);
+
+        // RFC 9068: mark access tokens explicitly so they can never be confused with ID tokens
+        // (e.g. an id_token presented as a bearer token to /connect/userinfo or to an API).
+        token.Header[JwtHeaderParameterNames.Typ] = AccessTokenType;
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
@@ -127,7 +131,7 @@ public class DefaultTokenService : ITokenService
                 claims.Add(new("phone_number_verified", user.PhoneNumberVerified.ToString().ToLower(), ClaimValueTypes.Boolean));
             }
 
-            claims.AddRange(user.AdditionalClaims);
+            claims.AddRange(WithoutReservedClaims(user.AdditionalClaims));
         }
 
         if (additionalClaims is not null)
@@ -143,6 +147,24 @@ public class DefaultTokenService : ITokenService
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
+
+    /// <summary>JOSE "typ" header value for JWT access tokens (RFC 9068).</summary>
+    public const string AccessTokenType = "at+jwt";
+
+    /// <summary>
+    /// Protocol claims that user-supplied claims (user.AdditionalClaims, e.g. rows in
+    /// AspNetUserClaims) must never set or duplicate: otherwise a user/admin-editable claim
+    /// could impersonate another subject (<c>sub</c>), extend scopes, change the audience, etc.
+    /// </summary>
+    public static readonly IReadOnlySet<string> ReservedClaimTypes = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "sub", "iss", "aud", "exp", "nbf", "iat", "jti", "client_id", "scope", "nonce",
+        "auth_time", "azp", "at_hash", "c_hash", "sid", "cnf", "typ", "acr",
+        ClaimTypes.NameIdentifier,
+    };
+
+    private static IEnumerable<Claim> WithoutReservedClaims(IEnumerable<Claim> claims)
+        => claims.Where(c => !ReservedClaimTypes.Contains(c.Type));
 
     private static void AddIfNotNull(List<Claim> claims, string type, string? value)
     {

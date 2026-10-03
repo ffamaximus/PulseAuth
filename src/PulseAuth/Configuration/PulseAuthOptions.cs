@@ -83,6 +83,15 @@ public class PulseAuthOptions
     public TimeSpan RefreshTokenReuseGracePeriod { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary>
+    /// How long consumed (rotated or revoked) refresh tokens are kept by
+    /// <c>IRefreshTokenStore.RemoveExpiredAsync</c>. While a consumed token is kept, presenting
+    /// it again is detected as <b>reuse</b> and the whole token family is revoked. After this
+    /// period the token is deleted and a replay is simply rejected as unknown.
+    /// Default: 7 days.
+    /// </summary>
+    public TimeSpan ConsumedRefreshTokenRetention { get; set; } = TimeSpan.FromDays(7);
+
+    /// <summary>
     /// Scopes that are always included in the discovery document.
     /// </summary>
     public IList<string> SupportedScopes { get; set; } = ["openid", "profile", "email", "offline_access"];

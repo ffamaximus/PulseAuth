@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PulseAuth.Abstractions;
 using PulseAuth.Configuration;
@@ -80,7 +82,15 @@ internal static class TokenEndpoint
                 // Lost a race with a concurrent request: accept only within the grace window.
                 var current = await refreshTokenStore.FindByTokenAsync(refreshToken, ct);
                 if (current is null || !current.IsWithinReuseGracePeriod(grace, DateTime.UtcNow))
+                {
+                    if (current is not null)
+                    {
+                        var logger = ctx.RequestServices.GetService<ILoggerFactory>()?.CreateLogger(typeof(TokenRequestValidator));
+                        await TokenRequestValidator.HandleRefreshTokenReuseAsync(
+                            refreshTokenStore, current, client.ClientId, logger, ct);
+                    }
                     return InvalidGrant("Refresh token has already been used");
+                }
             }
 
             rotatedRefreshToken = true;
@@ -100,7 +110,8 @@ internal static class TokenEndpoint
 
         // Handle refresh token
         string? newRefreshToken = null;
-        if (scopes.Contains(StandardScopes.OfflineAccess) || grantType == GrantTypes.RefreshToken)
+        if (grantType != GrantTypes.ClientCredentials &&
+            (scopes.Contains(StandardScopes.OfflineAccess) || grantType == GrantTypes.RefreshToken))
         {
             // Old refresh token was already consumed atomically above when rotating;
             // otherwise the same refresh token is returned (no rotation).
@@ -119,6 +130,9 @@ internal static class TokenEndpoint
                     ClientId  = client.ClientId,
                     SubjectId = subject,
                     Scopes    = scopes,
+                    // Link rotations into a family (hash only — never the raw previous token)
+                    // so reuse of an old token can revoke the whole chain.
+                    PreviousTokenId = rotatedRefreshToken ? RefreshToken.ComputeTokenId(refreshToken) : null,
                     CreatedAt = DateTime.UtcNow,
                     ExpiresAt = DateTime.UtcNow.AddSeconds(
                         client.RefreshTokenLifetime > 0

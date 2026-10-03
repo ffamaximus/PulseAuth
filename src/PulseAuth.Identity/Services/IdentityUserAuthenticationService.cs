@@ -52,6 +52,23 @@ public class IdentityUserAuthenticationService<TUser> : IUserAuthenticationServi
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// A user is active when it exists, is not locked out and — when Identity is configured with
+    /// <c>SignIn.RequireConfirmedAccount/Email/PhoneNumber</c> — is still allowed to sign in.
+    /// </remarks>
+    public async Task<bool> IsActiveAsync(string subjectId, CancellationToken ct = default)
+    {
+        var user = await _userManager.FindByIdAsync(subjectId);
+        if (user is null)
+            return false;
+
+        if (await _userManager.IsLockedOutAsync(user))
+            return false;
+
+        return await _signInManager.CanSignInAsync(user);
+    }
+
+    /// <inheritdoc />
     public async Task<UserInfo?> FindByExternalProviderAsync(
         string provider, string externalId, CancellationToken ct = default)
     {

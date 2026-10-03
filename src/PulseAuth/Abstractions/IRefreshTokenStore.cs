@@ -52,6 +52,24 @@ public interface IRefreshTokenStore
     /// <summary>Revokes all refresh tokens for a given subject + client combination (e.g. on logout).</summary>
     Task RevokeBySubjectAsync(string subjectId, string clientId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Called when refresh token <b>reuse</b> is detected (a rotated token presented again
+    /// outside the grace period — the classic sign of a stolen token, RFC 9700 §4.14.2).
+    /// Revokes every token of the same rotation family (the reused token, its ancestors,
+    /// its descendants and any grace-period forks), so both the attacker and the victim
+    /// must re-authenticate. Returns the number of tokens revoked (-1 if unknown).
+    /// </summary>
+    /// <remarks>
+    /// Families are linked through <see cref="Models.RefreshToken.PreviousTokenId"/>.
+    /// The default implementation cannot walk the chain and falls back to revoking ALL of
+    /// the user's tokens for that client via <see cref="RevokeBySubjectAsync"/> (safe, but coarser).
+    /// </remarks>
+    async Task<int> RevokeFamilyAsync(Models.RefreshToken reusedToken, CancellationToken ct = default)
+    {
+        await RevokeBySubjectAsync(reusedToken.SubjectId, reusedToken.ClientId, ct);
+        return -1;
+    }
+
     /// <summary>Removes all expired tokens. Called periodically for cleanup.</summary>
     Task RemoveExpiredAsync(CancellationToken ct = default);
 }

@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using PulseAuth.Abstractions;
 using PulseAuth.Configuration;
 using PulseAuth.Constants;
+using PulseAuth.Services;
 
 namespace PulseAuth.Endpoints;
 
@@ -36,6 +37,7 @@ internal static class UserInfoEndpoint
         var handler        = new JwtSecurityTokenHandler();
 
         ClaimsPrincipal principal;
+        SecurityToken   validatedToken;
         try
         {
             principal = handler.ValidateToken(token, new TokenValidationParameters
@@ -46,12 +48,22 @@ internal static class UserInfoEndpoint
                 ValidateLifetime     = true,
                 IssuerSigningKeys    = validationKeys,
                 ClockSkew            = TimeSpan.FromSeconds(30),
-            }, out _);
+            }, out validatedToken);
         }
-        catch (SecurityTokenException)
+        catch (Exception ex) when (ex is SecurityTokenException or ArgumentException)
         {
             return Results.Json(
                 new { error = OAuthErrors.InvalidToken, error_description = "Token validation failed" },
+                statusCode: 401);
+        }
+
+        // Only ACCESS tokens may call userinfo — never an ID token (token confusion).
+        // Current access tokens carry typ "at+jwt" (RFC 9068). Tokens issued by PulseAuth <= 1.2.x
+        // use "JWT"; they are recognised by the client_id claim, which ID tokens never contain.
+        if (!IsAccessToken(validatedToken))
+        {
+            return Results.Json(
+                new { error = OAuthErrors.InvalidToken, error_description = "An access token is required" },
                 statusCode: 401);
         }
 
@@ -92,11 +104,30 @@ internal static class UserInfoEndpoint
             result["phone_number_verified"] = user.PhoneNumberVerified;
         }
 
-        // Additional application claims
-        foreach (var claim in user.AdditionalClaims)
-            result[claim.Type] = claim.Value;
+        // Additional application claims. Protocol / standard claims already in the response
+        // (sub, email, ...) can never be overridden, and repeated types (e.g. several roles)
+        // are returned as arrays instead of keeping only the last value.
+        foreach (var group in user.AdditionalClaims
+                     .Where(c => !DefaultTokenService.ReservedClaimTypes.Contains(c.Type) && !result.ContainsKey(c.Type))
+                     .GroupBy(c => c.Type))
+        {
+            var values = group.Select(c => c.Value).ToArray();
+            result[group.Key] = values.Length == 1 ? values[0] : values;
+        }
 
         return Results.Ok(result);
+    }
+
+    private static bool IsAccessToken(SecurityToken token)
+    {
+        if (token is not JwtSecurityToken jwt)
+            return false;
+
+        if (string.Equals(jwt.Header.Typ, DefaultTokenService.AccessTokenType, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Legacy access tokens (typ "JWT"): identified by the client_id claim.
+        return jwt.Claims.Any(c => c.Type == "client_id");
     }
 
     private static void AddIfNotNull(Dictionary<string, object?> dict, string key, string? value)

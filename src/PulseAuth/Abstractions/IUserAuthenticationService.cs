@@ -22,6 +22,18 @@ public interface IUserAuthenticationService
     Task<UserInfo?> GetUserByIdAsync(string subjectId, CancellationToken ct = default);
 
     /// <summary>
+    /// Returns whether the user may still obtain tokens (exists, not disabled / locked out).
+    /// Checked on every refresh_token request so that deleting or blocking a user stops
+    /// their sessions on the next refresh instead of when the refresh token expires.
+    /// </summary>
+    /// <remarks>
+    /// The default implementation only checks that the user exists. Override it to also
+    /// honour lockouts, disabled accounts, etc. (the ASP.NET Core Identity implementation does).
+    /// </remarks>
+    async Task<bool> IsActiveAsync(string subjectId, CancellationToken ct = default)
+        => await GetUserByIdAsync(subjectId, ct) is not null;
+
+    /// <summary>
     /// Finds a user linked to an external provider identity (e.g. Google, GitHub).
     /// </summary>
     /// <param name="provider">Provider name ("Google", "GitHub", etc.).</param>

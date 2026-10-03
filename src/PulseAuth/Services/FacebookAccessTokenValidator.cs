@@ -62,13 +62,30 @@ public sealed class FacebookAccessTokenValidator : IExternalTokenValidator
         if (!debugData.TryGetProperty("is_valid", out var isValidEl) || !isValidEl.GetBoolean())
             return null;
 
-        // Verify the token is for this app
-        if (debugData.TryGetProperty("app_id", out var appIdEl) &&
-            appIdEl.GetString() != _appId)
+        // Verify the token was issued to THIS app. app_id is mandatory: a missing value must
+        // never be treated as a match (otherwise tokens issued to other apps would be accepted).
+        if (!debugData.TryGetProperty("app_id", out var appIdEl) ||
+            appIdEl.ValueKind != JsonValueKind.String ||
+            !string.Equals(appIdEl.GetString(), _appId, StringComparison.Ordinal))
+            return null;
+
+        // The debugged token must be a user token that has not expired.
+        if (debugData.TryGetProperty("type", out var typeEl) &&
+            typeEl.ValueKind == JsonValueKind.String &&
+            !string.Equals(typeEl.GetString(), "USER", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        if (debugData.TryGetProperty("expires_at", out var expEl) &&
+            expEl.ValueKind == JsonValueKind.Number &&
+            expEl.TryGetInt64(out var expiresAt) && expiresAt > 0 &&
+            DateTimeOffset.FromUnixTimeSeconds(expiresAt) <= DateTimeOffset.UtcNow)
             return null;
 
         // ── Step 2: Fetch user profile ────────────────────────────────────────
-        var profileUrl = $"me?fields=id,name,email,first_name,last_name,picture.type(large)&access_token={Uri.EscapeDataString(token)}";
+        // appsecret_proof proves the call comes from the app's server (recommended by Meta,
+        // and required when "Require App Secret" is enabled for the app).
+        var proof      = ComputeAppSecretProof(token, _appSecret);
+        var profileUrl = $"me?fields=id,name,email,first_name,last_name,picture.type(large)&access_token={Uri.EscapeDataString(token)}&appsecret_proof={proof}";
 
         JsonElement profile;
         try
@@ -89,6 +106,12 @@ public sealed class FacebookAccessTokenValidator : IExternalTokenValidator
         var id = idEl.GetString();
         if (string.IsNullOrEmpty(id)) return null;
 
+        // The profile must belong to the user the token was issued to.
+        if (debugData.TryGetProperty("user_id", out var userIdEl) &&
+            userIdEl.ValueKind == JsonValueKind.String &&
+            !string.Equals(userIdEl.GetString(), id, StringComparison.Ordinal))
+            return null;
+
         // Extract picture URL (nested: picture → data → url)
         string? pictureUrl = null;
         if (profile.TryGetProperty("picture", out var picEl) &&
@@ -105,6 +128,14 @@ public sealed class FacebookAccessTokenValidator : IExternalTokenValidator
             GivenName:  GetStr(profile, "first_name"),
             FamilyName: GetStr(profile, "last_name"),
             Picture:    pictureUrl);
+    }
+
+    private static string ComputeAppSecretProof(string accessToken, string appSecret)
+    {
+        var hash = System.Security.Cryptography.HMACSHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(appSecret),
+            System.Text.Encoding.UTF8.GetBytes(accessToken));
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     private static string? GetStr(JsonElement el, string prop)
