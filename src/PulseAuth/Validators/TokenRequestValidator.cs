@@ -49,6 +49,21 @@ public class TokenValidationResult
     public RefreshToken? RefreshTokenEntity { get; private init; }
 
     /// <summary>
+    /// True when the presented refresh token had ALREADY been rotated and was accepted only
+    /// because it is inside the reuse grace period (snapshot taken at validation time).
+    /// The token endpoint then issues new tokens without consuming it again.
+    /// </summary>
+    public bool IsRefreshTokenReuseWithinGracePeriod { get; private init; }
+
+    internal static TokenValidationResult SuccessRefresh(Client client, RefreshToken rt, bool reuseWithinGracePeriod)
+        => new()
+        {
+            IsValid = true, Client = client, SubjectId = rt.SubjectId,
+            Scopes = rt.Scopes.ToList().AsReadOnly(), RefreshTokenEntity = rt,
+            IsRefreshTokenReuseWithinGracePeriod = reuseWithinGracePeriod,
+        };
+
+    /// <summary>
     /// Creates a successful TokenValidationResult with the provided client, subject ID, scopes, nonce and refresh token entity. This method is used when the token request has been successfully validated and contains all the necessary information to proceed with issuing tokens or performing other actions as needed. The IsValid property will be set to true, and the Client, SubjectId, Scopes, Nonce and RefreshTokenEntity properties will be populated with the relevant information extracted from the token request.
     /// </summary>
     /// <param name="client"></param>
@@ -145,7 +160,7 @@ public class TokenRequestValidator
         if (!string.IsNullOrEmpty(client.ClientSecretHash))
         {
             if (string.IsNullOrEmpty(clientSecret) ||
-                !VerifySecret(clientSecret, client.ClientSecretHash))
+                !Helpers.ClientSecretHelper.Verify(clientSecret, client.ClientSecretHash))
                 return TokenValidationResult.Fail(OAuthErrors.InvalidClient, "Invalid client credentials");
         }
 
@@ -283,7 +298,7 @@ public class TokenRequestValidator
             return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "User is no longer active");
         }
 
-        return TokenValidationResult.Success(client, rt.SubjectId, rt.Scopes.ToList().AsReadOnly(), rt: rt);
+        return TokenValidationResult.SuccessRefresh(client, rt, reuseWithinGracePeriod: rt.IsConsumed);
     }
 
     /// <summary>
@@ -346,7 +361,15 @@ public class TokenRequestValidator
         if (user is null)
         {
             var claims = BuildExternalClaims(identity);
-            user = await _users.AutoProvisionUserAsync(validator.ProviderName, identity.SubjectId, claims, ct);
+            try
+            {
+                user = await _users.AutoProvisionUserAsync(validator.ProviderName, identity.SubjectId, claims, ct);
+            }
+            catch (Exceptions.UserProvisioningException ex)
+            {
+                _logger?.LogWarning(ex, "Auto-provisioning of a {Provider} user failed ({Reason})", validator.ProviderName, ex.Reason);
+                return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, ex.Message);
+            }
         }
 
         var requestedScopes = (scope ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries)
@@ -389,16 +412,6 @@ public class TokenRequestValidator
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private static bool VerifySecret(string secret, string storedHash)
-    {
-        // Constant-time comparison of SHA256 hashes
-        var hash = Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes(secret))).ToLowerInvariant();
-        return CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(hash),
-            Encoding.UTF8.GetBytes(storedHash.ToLowerInvariant()));
-    }
 
     private static bool VerifyPkce(string verifier, string challenge, string method)
     {

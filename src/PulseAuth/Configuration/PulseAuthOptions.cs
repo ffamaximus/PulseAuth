@@ -92,6 +92,43 @@ public class PulseAuthOptions
     public TimeSpan ConsumedRefreshTokenRetention { get; set; } = TimeSpan.FromDays(7);
 
     /// <summary>
+    /// When true, <c>/connect/endsession</c> requests without a valid <c>id_token_hint</c> for the
+    /// signed-in user are not executed directly: the user is redirected to <see cref="LogoutPath"/>
+    /// with a <c>returnUrl</c> to confirm. Your logout page must sign the user out (POST +
+    /// antiforgery) and then redirect to <c>returnUrl</c> (local redirect). Protects against logout CSRF.
+    /// Default: false (backward compatible).
+    /// </summary>
+    public bool RequireLogoutConfirmation { get; set; } = false;
+
+    /// <summary>
+    /// Allows the PKCE <c>plain</c> method. Disabled by default: <c>plain</c> offers no protection
+    /// if the authorization request is observed, and OAuth 2.1 only allows S256.
+    /// </summary>
+    public bool AllowPlainPkce { get; set; } = false;
+
+    /// <summary>
+    /// Runs a background job that periodically calls <c>RemoveExpiredAsync</c> on the
+    /// authorization code and refresh token stores. Default: true.
+    /// </summary>
+    public bool EnableTokenCleanup { get; set; } = true;
+
+    /// <summary>Interval of the token cleanup job. Default: 1 hour.</summary>
+    public TimeSpan TokenCleanupInterval { get; set; } = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Name of an ASP.NET Core rate limiting policy (<c>AddRateLimiter</c>) applied to the token,
+    /// revocation and userinfo endpoints. Requires <c>app.UseRateLimiter()</c>. Default: none.
+    /// </summary>
+    public string? RateLimitPolicy { get; set; }
+
+    /// <summary>
+    /// Answers CORS requests to the token, userinfo and revocation endpoints for origins listed in
+    /// a client's <c>AllowedCorsOrigins</c> (discovery and JWKS are public and allow any origin).
+    /// Default: true. Disable it if you handle CORS for these endpoints yourself.
+    /// </summary>
+    public bool EnableCors { get; set; } = true;
+
+    /// <summary>
     /// Scopes that are always included in the discovery document.
     /// </summary>
     public IList<string> SupportedScopes { get; set; } = ["openid", "profile", "email", "offline_access"];

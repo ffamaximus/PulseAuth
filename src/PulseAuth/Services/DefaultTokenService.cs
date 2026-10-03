@@ -16,6 +16,7 @@ public class DefaultTokenService : ITokenService
     private readonly IKeyMaterialService _keyMaterial;
     private readonly IUserAuthenticationService _users;
     private readonly PulseAuthOptions _options;
+    private readonly IClientStore? _clients;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DefaultTokenService"/> class with the provided dependencies. The token service relies on the <see cref="IKeyMaterialService"/> to obtain signing credentials for creating JWTs, and the <see cref="IUserAuthenticationService"/> to retrieve user information when generating ID tokens. The <see cref="PulseAuthOptions"/> are used to configure token properties such as issuer, audience, and token lifetimes. This default implementation creates access tokens containing standard claims (sub, jti, iat, client_id, scope) and ID tokens containing user profile claims based on the requested scopes (e.g., name, email). For production use, consider implementing a custom token service that supports additional features such as refresh tokens, custom claim transformations or different signing algorithms.
@@ -23,14 +24,27 @@ public class DefaultTokenService : ITokenService
     /// <param name="keyMaterial"></param>
     /// <param name="users"></param>
     /// <param name="options"></param>
+    /// <param name="clients">Client store, used to apply per-client token lifetimes.</param>
     public DefaultTokenService(
         IKeyMaterialService keyMaterial,
         IUserAuthenticationService users,
-        IOptions<PulseAuthOptions> options)
+        IOptions<PulseAuthOptions> options,
+        IClientStore? clients = null)
     {
         _keyMaterial = keyMaterial;
         _users       = users;
         _options     = options.Value;
+        _clients     = clients;
+    }
+
+    // Per-client lifetime when configured (> 0), otherwise the global default. The token
+    // endpoint uses the same rule for "expires_in", so the response and the JWT always agree.
+    private async Task<(int AccessToken, int IdentityToken)> GetLifetimesAsync(string clientId, CancellationToken ct)
+    {
+        var client = _clients is null ? null : await _clients.FindClientByIdAsync(clientId, ct);
+        return (
+            client is { AccessTokenLifetime: > 0 }   ? client.AccessTokenLifetime   : _options.DefaultAccessTokenLifetime,
+            client is { IdentityTokenLifetime: > 0 } ? client.IdentityTokenLifetime : _options.DefaultIdentityTokenLifetime);
     }
 
     /// <inheritdoc />
@@ -69,7 +83,7 @@ public class DefaultTokenService : ITokenService
             audience:           _options.DefaultAudience ?? clientId,
             claims:             claims,
             notBefore:          now,
-            expires:            now.AddSeconds(_options.DefaultAccessTokenLifetime),
+            expires:            now.AddSeconds((await GetLifetimesAsync(clientId, ct)).AccessToken),
             signingCredentials: credentials);
 
         // RFC 9068: mark access tokens explicitly so they can never be confused with ID tokens
@@ -102,7 +116,8 @@ public class DefaultTokenService : ITokenService
             new(JwtRegisteredClaimNames.Sub,      subjectId),
             new(JwtRegisteredClaimNames.Jti,      Guid.NewGuid().ToString()),
             new(JwtRegisteredClaimNames.Iat,      EpochTime.GetIntDate(now).ToString(), ClaimValueTypes.Integer64),
-            new(JwtRegisteredClaimNames.AuthTime, EpochTime.GetIntDate(now).ToString(), ClaimValueTypes.Integer64),
+            // auth_time is NOT set here: it must be the time the user actually authenticated, which
+            // only the caller knows (the token endpoint passes it for password / social grants).
         };
 
         if (!string.IsNullOrEmpty(nonce))
@@ -142,7 +157,7 @@ public class DefaultTokenService : ITokenService
             audience:           clientId,
             claims:             claims,
             notBefore:          now,
-            expires:            now.AddSeconds(_options.DefaultIdentityTokenLifetime),
+            expires:            now.AddSeconds((await GetLifetimesAsync(clientId, ct)).IdentityToken),
             signingCredentials: credentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);

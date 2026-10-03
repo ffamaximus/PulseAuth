@@ -50,6 +50,9 @@ public static class ServiceCollectionExtensions
         // Default token service
         services.TryAddScoped<ITokenService, DefaultTokenService>();
 
+        // Periodic removal of expired codes / refresh tokens (PulseAuthOptions.EnableTokenCleanup)
+        services.AddHostedService<TokenCleanupService>();
+
         // HttpContext accessor (needed for endpoints)
         services.AddHttpContextAccessor();
 

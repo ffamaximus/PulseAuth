@@ -89,16 +89,45 @@ public class IdentityUserAuthenticationService<TUser> : IUserAuthenticationServi
                     ?? email
                     ?? $"{provider}_{externalId}";
 
+        // Never silently merge with an existing local account that has the same e-mail: linking
+        // must be done by the signed-in owner of that account (account takeover protection).
+        if (!string.IsNullOrEmpty(email) && await _userManager.FindByEmailAsync(email) is not null)
+            throw new PulseAuth.Exceptions.UserProvisioningException("duplicate_email",
+                $"An account with this e-mail already exists. Sign in to it and link your {provider} account.");
+
         var user = Activator.CreateInstance<TUser>();
-        user.UserName = SanitizeUsername(username);
+        user.UserName = await GetUniqueUserNameAsync(SanitizeUsername(username));
         user.Email    = email;
 
         var createResult = await _userManager.CreateAsync(user);
         if (!createResult.Succeeded)
-            throw new InvalidOperationException(
-                $"Failed to auto-provision user: {string.Join(", ", createResult.Errors.Select(e => e.Description))}");
+        {
+            var duplicateEmail = createResult.Errors.Any(e => e.Code == nameof(IdentityErrorDescriber.DuplicateEmail));
+            throw new PulseAuth.Exceptions.UserProvisioningException(
+                duplicateEmail ? "duplicate_email" : "provisioning_failed",
+                duplicateEmail
+                    ? $"An account with this e-mail already exists. Sign in to it and link your {provider} account."
+                    : "The user account could not be created.",
+                new InvalidOperationException(string.Join(", ", createResult.Errors.Select(e => $"{e.Code}: {e.Description}"))));
+        }
 
-        await _userManager.AddLoginAsync(user, new UserLoginInfo(provider, externalId, provider));
+        var loginResult = await _userManager.AddLoginAsync(user, new UserLoginInfo(provider, externalId, provider));
+        if (!loginResult.Succeeded)
+        {
+            await _userManager.DeleteAsync(user); // do not leave an orphan account without a login
+            throw new PulseAuth.Exceptions.UserProvisioningException("provisioning_failed",
+                "The user account could not be created.",
+                new InvalidOperationException(string.Join(", ", loginResult.Errors.Select(e => $"{e.Code}: {e.Description}"))));
+        }
+
+        // Keep the profile information from the provider (name, picture, ...) as user claims,
+        // so it is available in ID tokens / userinfo for the "profile" scope.
+        var profileClaims = claims
+            .Where(c => c.Type is ClaimTypes.Name or ClaimTypes.GivenName or ClaimTypes.Surname or "picture")
+            .Where(c => !string.IsNullOrEmpty(c.Value))
+            .ToList();
+        if (profileClaims.Count > 0)
+            await _userManager.AddClaimsAsync(user, profileClaims);
 
         return await BuildUserInfoAsync(user);
     }
@@ -146,6 +175,25 @@ public class IdentityUserAuthenticationService<TUser> : IUserAuthenticationServi
             Picture    = rawClaims.FirstOrDefault(c => c.Type == "picture")?.Value,
             AdditionalClaims = additionalClaims,
         };
+    }
+
+    /// <summary>
+    /// Display names from social providers are not unique ("Juan Pérez"): append a short random
+    /// suffix when the user name is already taken instead of failing the login.
+    /// </summary>
+    private async Task<string> GetUniqueUserNameAsync(string baseName)
+    {
+        var candidate = baseName;
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            if (await _userManager.FindByNameAsync(candidate) is null)
+                return candidate;
+
+            var suffix = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(3)).ToLowerInvariant();
+            candidate  = $"{baseName[..Math.Min(baseName.Length, 57)]}_{suffix}";
+        }
+
+        return $"user_{Guid.NewGuid():N}";
     }
 
     private static string SanitizeUsername(string input)

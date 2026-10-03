@@ -31,12 +31,18 @@ internal static class EndSessionEndpoint
         CancellationToken          ct)
     {
         var options = optionsAccessor.Value;
-        var q       = ctx.Request.Query;
 
-        var requestedRedirectUri = q["post_logout_redirect_uri"].ToString();
-        var state                = q["state"].ToString();
-        var clientId             = q["client_id"].ToString();
-        var idTokenHint          = q["id_token_hint"].ToString();
+        // OIDC RP-Initiated Logout allows GET (query) and POST (form).
+        var parameters = HttpMethods.IsPost(ctx.Request.Method) && ctx.Request.HasFormContentType
+            ? (await ctx.Request.ReadFormAsync(ct)).ToDictionary(kv => kv.Key, kv => kv.Value.ToString())
+            : ctx.Request.Query.ToDictionary(kv => kv.Key, kv => kv.Value.ToString());
+
+        string Param(string name) => parameters.TryGetValue(name, out var v) ? v : string.Empty;
+
+        var requestedRedirectUri = Param("post_logout_redirect_uri");
+        var state                = Param("state");
+        var clientId             = Param("client_id");
+        var idTokenHint          = Param("id_token_hint");
 
         // ── 1. Identify the client (client_id and/or id_token_hint) ──────────
         string? hintSubject = null;
@@ -86,6 +92,21 @@ internal static class EndSessionEndpoint
             // id_token_hint was supplied it must belong to the same user.
             var hintMatchesSession = hintSubject is null ||
                                      string.Equals(hintSubject, subjectId, StringComparison.Ordinal);
+
+            // Logout CSRF protection (OIDC RP-Initiated Logout §2): without a valid id_token_hint
+            // for the current user, any site could sign the user out with a simple link. When
+            // enabled, the user is sent to LogoutPath to confirm; that page signs out (POST with
+            // antiforgery) and then redirects back to returnUrl, which completes the flow here.
+            var verifiedByHint = hintSubject is not null && hintMatchesSession && clientValid;
+            if (options.RequireLogoutConfirmation && !verifiedByHint)
+            {
+                var returnUrl = QueryHelpers.AddQueryString(
+                    ctx.Request.PathBase + ctx.Request.Path,
+                    parameters.Where(kv => !string.IsNullOrEmpty(kv.Value))
+                              .Select(kv => new KeyValuePair<string, string?>(kv.Key, kv.Value)));
+
+                return Results.Redirect(QueryHelpers.AddQueryString(options.LogoutPath, "returnUrl", returnUrl));
+            }
 
             if (clientValid && hintMatchesSession &&
                 !string.IsNullOrEmpty(subjectId) && !string.IsNullOrEmpty(clientId))

@@ -16,24 +16,32 @@ internal static class DiscoveryEndpoint
         HttpContext                ctx,
         IOptions<PulseAuthOptions> optionsAccessor,
         IKeyMaterialService        keyMaterial,
+        IEnumerable<IExternalTokenValidator> externalValidators,
         CancellationToken          ct)
     {
         var options = optionsAccessor.Value;
         var signing = await keyMaterial.GetSigningCredentialsAsync(ct);
-        var issuer  = options.Issuer.TrimEnd('/');
+        var baseUrl = options.Issuer.TrimEnd('/');   // only for building endpoint URLs
         var prefix  = options.RoutePrefix.TrimEnd('/');
 
         var doc = new DiscoveryDocument
         {
-            Issuer                = issuer,
-            AuthorizationEndpoint = $"{issuer}{prefix}/authorize",
-            TokenEndpoint         = $"{issuer}{prefix}/token",
-            UserInfoEndpoint      = $"{issuer}{prefix}/userinfo",
-            JwksUri               = $"{issuer}/.well-known/jwks",
-            EndSessionEndpoint    = $"{issuer}{prefix}/endsession",
-            RevocationEndpoint    = $"{issuer}{prefix}/revocation",
+            // Must be byte-for-byte identical to the "iss" claim of issued tokens (OIDC Discovery §4.3),
+            // so it is published exactly as configured (a trailing "/" is NOT removed).
+            Issuer                = options.Issuer,
+            AuthorizationEndpoint = $"{baseUrl}{prefix}/authorize",
+            TokenEndpoint         = $"{baseUrl}{prefix}/token",
+            UserInfoEndpoint      = $"{baseUrl}{prefix}/userinfo",
+            JwksUri               = $"{baseUrl}/.well-known/jwks",
+            EndSessionEndpoint    = $"{baseUrl}{prefix}/endsession",
+            RevocationEndpoint    = $"{baseUrl}{prefix}/revocation",
             ScopesSupported       = options.SupportedScopes,
             IdTokenSigningAlgValuesSupported = [signing.Algorithm],
+            CodeChallengeMethodsSupported    = options.AllowPlainPkce ? ["S256", "plain"] : ["S256"],
+            GrantTypesSupported   = new[] { "authorization_code", "client_credentials", "refresh_token", "password" }
+                                        .Concat(externalValidators.Select(v => v.SupportedGrantType))
+                                        .Distinct()
+                                        .ToArray(),
             ClaimsSupported       = ["sub", "name", "given_name", "family_name", "email", "email_verified", "picture", "preferred_username"],
         };
 

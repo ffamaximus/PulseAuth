@@ -27,6 +27,18 @@ public static class ClientSecretHelper
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(secret))).ToLowerInvariant();
 
     /// <summary>
+    /// Verifies a presented secret against a hash produced by <see cref="HashSecret"/>
+    /// using a constant-time comparison.
+    /// </summary>
+    public static bool Verify(string secret, string storedHash)
+    {
+        var hash = HashSecret(secret);
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(hash),
+            Encoding.UTF8.GetBytes(storedHash.Trim().ToLowerInvariant()));
+    }
+
+    /// <summary>
     /// Generates a secret and its hash in a single call.
     /// </summary>
     public static (string PlainText, string Hash) GenerateAndHash()

@@ -32,8 +32,21 @@ public class InMemoryAuthorizationCodeStore : IAuthorizationCodeStore
     /// <returns></returns>
     public Task<AuthorizationCode?> FindByCodeAsync(string code, CancellationToken ct = default)
     {
-        _codes.TryGetValue(code, out var authCode);
-        return Task.FromResult(authCode);
+        if (!_codes.TryGetValue(code, out var c))
+            return Task.FromResult<AuthorizationCode?>(null);
+
+        // Return a snapshot: callers must never observe (or cause) concurrent mutations.
+        lock (c)
+        {
+            return Task.FromResult<AuthorizationCode?>(new AuthorizationCode
+            {
+                Code = c.Code, ClientId = c.ClientId, SubjectId = c.SubjectId,
+                CodeChallenge = c.CodeChallenge, CodeChallengeMethod = c.CodeChallengeMethod,
+                Scopes = c.Scopes.ToArray(), RedirectUri = c.RedirectUri, Nonce = c.Nonce,
+                SessionId = c.SessionId, CreatedAt = c.CreatedAt, ExpiresAt = c.ExpiresAt,
+                IsConsumed = c.IsConsumed,
+            });
+        }
     }
 
     /// <summary>

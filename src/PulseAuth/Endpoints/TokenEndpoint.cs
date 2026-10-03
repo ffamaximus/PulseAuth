@@ -27,11 +27,19 @@ internal static class TokenEndpoint
         CancellationToken          ct)
     {
         var options = optionsAccessor.Value;
-        var form    = ctx.Request.Form;
+
+        if (!ctx.Request.HasFormContentType)
+            return ClientCredentialsReader.NotAForm();
+
+        var form = await ctx.Request.ReadFormAsync(ct);
 
         // Support both form-body and Authorization header for client credentials
-        ExtractClientCredentials(ctx, form,
-            out var clientId, out var clientSecret);
+        var credentials = ClientCredentialsReader.Read(ctx, form);
+        if (!credentials.IsValid)
+            return ClientCredentialsReader.InvalidClient(ctx, credentials.UsedBasic, "Malformed client credentials");
+
+        var clientId     = credentials.ClientId;
+        var clientSecret = credentials.ClientSecret;
 
         var grantType     = form["grant_type"].ToString();
         var code          = form["code"].ToString();
@@ -50,9 +58,18 @@ internal static class TokenEndpoint
             refreshToken, username, password, externalToken, ct);
 
         if (!validation.IsValid)
+        {
+            Logger(ctx)?.LogInformation(
+                "Token request rejected: {Error} ({Description}) client={ClientId} grant_type={GrantType}",
+                validation.Error, validation.ErrorDesc, clientId, grantType);
+
+            if (validation.Error == OAuthErrors.InvalidClient)
+                return ClientCredentialsReader.InvalidClient(ctx, credentials.UsedBasic, validation.ErrorDesc ?? "Invalid client");
+
             return Results.Json(
                 new { error = validation.Error, error_description = validation.ErrorDesc },
                 statusCode: 400);
+        }
 
         var client    = validation.Client!;
         var subject   = validation.SubjectId!;
@@ -76,7 +93,9 @@ internal static class TokenEndpoint
             var grace = options.RefreshTokenReuseGracePeriod;
 
             // If the validator already saw it consumed, it was accepted inside the grace window.
-            if (!validation.RefreshTokenEntity.IsConsumed &&
+            // (Use the validation-time snapshot: a store may return live objects that another
+            // concurrent request has modified since.)
+            if (!validation.IsRefreshTokenReuseWithinGracePeriod &&
                 !await refreshTokenStore.TryConsumeAsync(refreshToken, grace, ct))
             {
                 // Lost a race with a concurrent request: accept only within the grace window.
@@ -97,15 +116,39 @@ internal static class TokenEndpoint
         }
 
         // Create access token
-        var accessToken = await tokenService.CreateAccessTokenAsync(subject, client.ClientId, scopes, ct: ct);
+        // client_credentials tokens carry the client's own claims (Client.Claims); protocol claims
+        // can never be overridden this way.
+        List<System.Security.Claims.Claim>? accessTokenClaims = null;
+        if (grantType == GrantTypes.ClientCredentials && client.Claims.Count > 0)
+        {
+            accessTokenClaims = client.Claims
+                .Where(c => !Services.DefaultTokenService.ReservedClaimTypes.Contains(c.Key))
+                .Select(c => new System.Security.Claims.Claim(c.Key, c.Value))
+                .ToList();
+        }
+
+        var accessToken = await tokenService.CreateAccessTokenAsync(subject, client.ClientId, scopes, accessTokenClaims, ct);
 
         // Create ID token for any user-facing grant (client_credentials has no user identity).
         // CreateIdTokenAsync returns null if openid scope is not present, so it's safe to call always.
         string? idToken = null;
         if (grantType != GrantTypes.ClientCredentials)
         {
+            // auth_time = when the user authenticated. Known for grants that authenticate the user
+            // in this very request (password, social token exchange); omitted otherwise.
+            List<System.Security.Claims.Claim>? idTokenClaims = null;
+            if (grantType != GrantTypes.AuthorizationCode && grantType != GrantTypes.RefreshToken)
+            {
+                idTokenClaims =
+                [
+                    new(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.AuthTime,
+                        DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
+                        System.Security.Claims.ClaimValueTypes.Integer64),
+                ];
+            }
+
             idToken = await tokenService.CreateIdTokenAsync(
-                subject, client.ClientId, validation.Nonce, scopes, ct: ct);
+                subject, client.ClientId, validation.Nonce, scopes, idTokenClaims, ct);
         }
 
         // Handle refresh token
@@ -164,30 +207,8 @@ internal static class TokenEndpoint
             new { error = OAuthErrors.InvalidGrant, error_description = description },
             statusCode: 400);
 
-    private static void ExtractClientCredentials(
-        HttpContext ctx,
-        IFormCollection form,
-        out string? clientId,
-        out string? clientSecret)
-    {
-        // Try Authorization: Basic header first
-        var authHeader = ctx.Request.Headers.Authorization.ToString();
-        if (authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
-        {
-            var decoded = System.Text.Encoding.UTF8.GetString(
-                Convert.FromBase64String(authHeader["Basic ".Length..]));
-            var parts = decoded.Split(':', 2);
-            clientId     = parts.Length > 0 ? Uri.UnescapeDataString(parts[0]) : null;
-            clientSecret = parts.Length > 1 ? Uri.UnescapeDataString(parts[1]) : null;
-            return;
-        }
-
-        // Fall back to form body
-        clientId     = form["client_id"].ToString();
-        clientSecret = form["client_secret"].ToString();
-        if (string.IsNullOrEmpty(clientId)) clientId = null;
-        if (string.IsNullOrEmpty(clientSecret)) clientSecret = null;
-    }
+    private static ILogger? Logger(HttpContext ctx)
+        => ctx.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("PulseAuth.TokenEndpoint");
 
     private static string GenerateToken()
     {

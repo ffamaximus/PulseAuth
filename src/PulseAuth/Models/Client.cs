@@ -34,7 +34,10 @@ public class Client
     /// <summary>Scopes the client is allowed to request.</summary>
     public ICollection<string> AllowedScopes { get; set; } = new List<string>();
 
-    /// <summary>CORS origins allowed to call token endpoint.</summary>
+    /// <summary>
+    /// Browser origins (e.g. <c>https://app.example.com</c>) allowed to call the token, userinfo and
+    /// revocation endpoints (CORS). Requires <c>PulseAuthOptions.EnableCors</c> (default true).
+    /// </summary>
     public ICollection<string> AllowedCorsOrigins { get; set; } = new List<string>();
 
     /// <summary>Whether PKCE is required (recommended for all public clients).</summary>
@@ -43,7 +46,10 @@ public class Client
     /// <summary>Whether the client can request refresh tokens (offline_access scope).</summary>
     public bool AllowOfflineAccess { get; set; } = false;
 
-    /// <summary>Whether a consent screen is shown before authorization.</summary>
+    /// <summary>
+    /// Reserved for a future consent screen. <b>Not enforced yet</b>: setting it has no effect
+    /// in this version, so do not rely on it to obtain user consent.
+    /// </summary>
     public bool RequireConsent { get; set; } = false;
 
     /// <summary>Whether this client is enabled.</summary>
@@ -61,6 +67,9 @@ public class Client
     /// <summary>ID token lifetime in seconds. Default: 300 (5 minutes).</summary>
     public int IdentityTokenLifetime { get; set; } = 300;
 
-    /// <summary>Additional claims to always include in tokens for this client.</summary>
+    /// <summary>
+    /// Claims added to access tokens issued with the <c>client_credentials</c> grant
+    /// (e.g. tenant, service role). Protocol claims (sub, scope, client_id, ...) are ignored.
+    /// </summary>
     public IDictionary<string, string> Claims { get; set; } = new Dictionary<string, string>();
 }

@@ -1,35 +1,65 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using PulseAuth.Abstractions;
 using PulseAuth.Constants;
+using PulseAuth.Helpers;
 
 namespace PulseAuth.Endpoints;
 
 /// <summary>
-/// Handles POST /connect/revocation (RFC 7009)
-/// Revokes an access token or refresh token.
+/// Handles POST /connect/revocation (RFC 7009).
 /// </summary>
+/// <remarks>
+/// The client must authenticate (confidential clients) or identify itself with
+/// <c>client_id</c> (public clients), and can only revoke tokens that were issued to it.
+/// Refresh tokens are revoked. JWT access tokens are self-contained and cannot be revoked:
+/// the request succeeds but has no effect (keep access token lifetimes short).
+/// </remarks>
 internal static class RevocationEndpoint
 {
     public static async Task<IResult> HandleAsync(
         HttpContext              ctx,
+        IClientStore             clients,
         IRefreshTokenStore       refreshTokenStore,
         CancellationToken        ct)
     {
-        var form      = ctx.Request.Form;
-        var token     = form["token"].ToString();
-        var tokenHint = form["token_type_hint"].ToString();
+        if (!ctx.Request.HasFormContentType)
+            return ClientCredentialsReader.NotAForm();
 
+        var form = await ctx.Request.ReadFormAsync(ct);
+
+        // ── 1. Client authentication (RFC 7009 §2.1) ─────────────────────────
+        var credentials = ClientCredentialsReader.Read(ctx, form);
+        if (!credentials.IsValid || string.IsNullOrEmpty(credentials.ClientId))
+            return ClientCredentialsReader.InvalidClient(ctx, credentials.UsedBasic, "Client authentication failed");
+
+        var client = await clients.FindClientByIdAsync(credentials.ClientId, ct);
+        if (client is null || !client.Enabled)
+            return ClientCredentialsReader.InvalidClient(ctx, credentials.UsedBasic, "Client authentication failed");
+
+        if (!string.IsNullOrEmpty(client.ClientSecretHash) &&
+            (credentials.ClientSecret is null || !ClientSecretHelper.Verify(credentials.ClientSecret, client.ClientSecretHash)))
+            return ClientCredentialsReader.InvalidClient(ctx, credentials.UsedBasic, "Client authentication failed");
+
+        // ── 2. Revoke ───────────────────────────────────────────────────────
+        var token = form["token"].ToString();
         if (string.IsNullOrEmpty(token))
             return Results.Json(
                 new { error = OAuthErrors.InvalidRequest, error_description = "token is required" },
                 statusCode: 400);
 
-        // Try to revoke as refresh token
         var rt = await refreshTokenStore.FindByTokenAsync(token, ct);
-        if (rt is not null)
-            await refreshTokenStore.ConsumeAsync(token, ct);
 
-        // Per RFC 7009 §2.2: always return 200 OK (don't reveal whether token existed)
+        // Only the client the token was issued to may revoke it. For any other client — or an
+        // unknown / access token — respond 200 without revealing anything (RFC 7009 §2.2).
+        if (rt is not null && string.Equals(rt.ClientId, client.ClientId, StringComparison.Ordinal))
+        {
+            await refreshTokenStore.ConsumeAsync(token, ct);
+            ctx.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("PulseAuth.RevocationEndpoint")
+                .LogInformation("Refresh token revoked by client {ClientId} (subject {SubjectId})", client.ClientId, rt.SubjectId);
+        }
+
         return Results.Ok();
     }
 }

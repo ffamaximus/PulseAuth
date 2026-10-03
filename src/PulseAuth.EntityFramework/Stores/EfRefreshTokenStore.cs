@@ -184,8 +184,12 @@ public class EfRefreshTokenStore : IRefreshTokenStore
         var revoked = 0;
         foreach (var chunk in family.Chunk(500))
         {
+            // Use a List<T>, not the T[] returned by Chunk: with C# 14 (.NET 10 SDK) "first-class
+            // spans", array.Contains(x) binds to MemoryExtensions.Contains(ReadOnlySpan<T>, T),
+            // which EF Core 8/9 cannot translate. List<T>.Contains is translated by every version.
+            var keys = chunk.ToList();
             revoked += await _db.RefreshTokens
-                .Where(t => chunk.Contains(t.Key) && (!t.IsConsumed || t.ExpiresAt > now))
+                .Where(t => keys.Contains(t.Key) && (!t.IsConsumed || t.ExpiresAt > now))
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(t => t.IsConsumed, true)
                     .SetProperty(t => t.ExpiresAt, t => t.ExpiresAt > now ? now : t.ExpiresAt), ct);

@@ -9,6 +9,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PulseAuth.Identity", "src\P
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PulseAuth.EntityFramework", "src\PulseAuth.EntityFramework\PulseAuth.EntityFramework.csproj", "{C3D4E5F6-A7B8-9012-CDEF-123456789012}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{F3BA4CD5-61C1-4F88-8179-F544C870DF6B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PulseAuth.Tests", "tests\PulseAuth.Tests\PulseAuth.Tests.csproj", "{48EFD0E8-970B-43E4-9565-45583047BE60}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PulseAuth.EntityFramework.Tests", "tests\PulseAuth.EntityFramework.Tests\PulseAuth.EntityFramework.Tests.csproj", "{B5CDC3BA-0CCF-4F2C-B1E8-F4D57204C395}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -27,5 +33,17 @@ Global
 		{C3D4E5F6-A7B8-9012-CDEF-123456789012}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C3D4E5F6-A7B8-9012-CDEF-123456789012}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C3D4E5F6-A7B8-9012-CDEF-123456789012}.Release|Any CPU.Build.0 = Release|Any CPU
+		{48EFD0E8-970B-43E4-9565-45583047BE60}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{48EFD0E8-970B-43E4-9565-45583047BE60}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{48EFD0E8-970B-43E4-9565-45583047BE60}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{48EFD0E8-970B-43E4-9565-45583047BE60}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B5CDC3BA-0CCF-4F2C-B1E8-F4D57204C395}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B5CDC3BA-0CCF-4F2C-B1E8-F4D57204C395}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B5CDC3BA-0CCF-4F2C-B1E8-F4D57204C395}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B5CDC3BA-0CCF-4F2C-B1E8-F4D57204C395}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{48EFD0E8-970B-43E4-9565-45583047BE60} = {F3BA4CD5-61C1-4F88-8179-F544C870DF6B}
+		{B5CDC3BA-0CCF-4F2C-B1E8-F4D57204C395} = {F3BA4CD5-61C1-4F88-8179-F544C870DF6B}
 	EndGlobalSection
 EndGlobal

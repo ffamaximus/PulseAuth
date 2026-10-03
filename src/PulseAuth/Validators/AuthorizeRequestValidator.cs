@@ -1,4 +1,6 @@
+using Microsoft.Extensions.Options;
 using PulseAuth.Abstractions;
+using PulseAuth.Configuration;
 using PulseAuth.Constants;
 using PulseAuth.Models;
 
@@ -73,7 +75,14 @@ public class AuthorizeRequestValidator
     /// Initializes a new instance of the <see cref="AuthorizeRequestValidator"/> class with the specified client store. The client store is used to retrieve client information based on the client_id provided in the authorization request, which is essential for validating the request parameters (e.g., allowed grant types, redirect URIs, allowed scopes). This validator will check for the presence and validity of required parameters, ensure that the client is authorized to use the requested response type and scopes, and return a validation result that indicates whether the request is valid or not, along with any relevant error information if it is invalid.
     /// </summary>
     /// <param name="clients"></param>
-    public AuthorizeRequestValidator(IClientStore clients) => _clients = clients;
+    /// <param name="options">PulseAuth options (PKCE policy).</param>
+    public AuthorizeRequestValidator(IClientStore clients, IOptions<PulseAuthOptions>? options = null)
+    {
+        _clients        = clients;
+        _allowPlainPkce = options?.Value.AllowPlainPkce ?? false;
+    }
+
+    private readonly bool _allowPlainPkce;
 
     /// <summary>
     /// Validates the parameters of an authorization request. This method checks for the presence and validity of required parameters such as client_id, response_type, redirect_uri, scope, code_challenge, and code_challenge_method. It retrieves the client information from the client store based on the provided client_id and validates that the client is enabled and authorized to use the requested response type and scopes. It also validates the redirect_uri against the client's registered redirect URIs and checks PKCE requirements if applicable. The method returns an AuthorizeValidationResult indicating whether the validation was successful or if there were any errors that should be communicated back to the client.
@@ -133,8 +142,11 @@ public class AuthorizeRequestValidator
             return AuthorizeValidationResult.Fail(OAuthErrors.InvalidRequest, "code_challenge is required for this client", validatedRedirectUri);
 
         if (!string.IsNullOrEmpty(codeChallengeMethod) &&
-            codeChallengeMethod != "S256" && codeChallengeMethod != "plain")
-            return AuthorizeValidationResult.Fail(OAuthErrors.InvalidRequest, "Unsupported code_challenge_method. Use S256 or plain", validatedRedirectUri);
+            codeChallengeMethod != "S256" && !(codeChallengeMethod == "plain" && _allowPlainPkce))
+            return AuthorizeValidationResult.Fail(OAuthErrors.InvalidRequest,
+                _allowPlainPkce ? "Unsupported code_challenge_method. Use S256 or plain"
+                                : "Unsupported code_challenge_method. Use S256",
+                validatedRedirectUri);
 
         // Validate scopes
         var requestedScopes = (scope ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();

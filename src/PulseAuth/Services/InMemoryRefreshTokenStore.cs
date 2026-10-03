@@ -39,8 +39,19 @@ public class InMemoryRefreshTokenStore : IRefreshTokenStore
     /// <returns></returns>
     public Task<RefreshToken?> FindByTokenAsync(string token, CancellationToken ct = default)
     {
-        _tokens.TryGetValue(token, out var rt);
-        return Task.FromResult(rt);
+        if (!_tokens.TryGetValue(token, out var rt))
+            return Task.FromResult<RefreshToken?>(null);
+
+        // Return a snapshot: callers must never observe (or cause) concurrent mutations.
+        lock (rt)
+        {
+            return Task.FromResult<RefreshToken?>(new RefreshToken
+            {
+                Token = rt.Token, ClientId = rt.ClientId, SubjectId = rt.SubjectId, Scopes = rt.Scopes.ToArray(),
+                CreatedAt = rt.CreatedAt, ExpiresAt = rt.ExpiresAt, IsConsumed = rt.IsConsumed,
+                PreviousTokenId = rt.PreviousTokenId,
+            });
+        }
     }
 
     /// <summary>

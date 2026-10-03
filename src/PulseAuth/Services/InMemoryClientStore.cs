@@ -31,4 +31,12 @@ public class InMemoryClientStore : IClientStore
         _clients.TryGetValue(clientId, out var client);
         return Task.FromResult(client);
     }
+
+    /// <summary>
+    /// Returns true if any enabled client lists the origin in <see cref="Client.AllowedCorsOrigins"/>.
+    /// </summary>
+    public Task<bool> IsOriginAllowedAsync(string origin, CancellationToken ct = default)
+        => Task.FromResult(_clients.Values.Any(c =>
+            c.Enabled &&
+            c.AllowedCorsOrigins.Any(o => string.Equals(o.TrimEnd('/'), origin.TrimEnd('/'), StringComparison.OrdinalIgnoreCase))));
 }

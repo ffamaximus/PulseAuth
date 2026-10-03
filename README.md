@@ -554,6 +554,59 @@ app.MapGet("/dashboard", () => ...).RequireAuthorization("AdminOnly");
 
 ---
 
+## Hardening options
+
+```csharp
+builder.Services.AddPulseAuth(opts =>
+{
+    opts.Issuer = "https://auth.myapp.com";
+
+    opts.EnableCors                = true;              // default: answer CORS for Client.AllowedCorsOrigins
+    opts.RateLimitPolicy           = "pulseauth";       // see below (requires app.UseRateLimiter())
+    opts.RequireLogoutConfirmation = true;              // logout CSRF protection (see below)
+    opts.AllowPlainPkce            = false;             // default: only S256
+    opts.EnableTokenCleanup        = true;              // default: hourly removal of expired codes/tokens
+    opts.TokenCleanupInterval      = TimeSpan.FromHours(1);
+});
+```
+
+**CORS (SPAs).** Browsers calling `/connect/token`, `/connect/userinfo` or `/connect/revocation`
+from another origin are allowed when the origin is listed in a client's `AllowedCorsOrigins`
+(no `app.UseCors()` needed). Discovery and JWKS allow any origin.
+
+```csharp
+new Client { ClientId = "my-spa", AllowedCorsOrigins = ["https://app.myapp.com"], ... }
+```
+
+**Rate limiting.** Protect the token endpoint against password guessing and abuse with the built-in
+ASP.NET Core rate limiter:
+
+```csharp
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    o.AddPolicy("pulseauth", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1) }));
+});
+// ...
+app.UseRateLimiter();
+```
+
+**Logout confirmation.** With `RequireLogoutConfirmation = true`, `/connect/endsession` requests
+without a valid `id_token_hint` (e.g. a plain link on another site) do not sign the user out.
+The user is sent to `LogoutPath?returnUrl=...`; your page asks for confirmation, signs out with a
+POST protected by antiforgery and then does `LocalRedirect(returnUrl)` to finish the flow.
+
+**Revocation.** `/connect/revocation` requires the client to identify itself (`client_id`, plus
+`client_secret` for confidential clients) and only revokes tokens issued to that client
+(RFC 7009). JWT access tokens cannot be revoked — keep their lifetime short.
+
+**Consent.** `Client.RequireConsent` is reserved for a future consent screen and is **not enforced**
+in this version.
+
+---
+
 ## Validating tokens in other microservices
 
 Any ASP.NET Core microservice can validate PulseAuth tokens using standard JWT Bearer — no PulseAuth package required:
@@ -754,6 +807,20 @@ builder.Services.AddDbContext<AuthDbContext>(opts => opts.UseMySql(conn, version
 builder.Services.AddPulseAuth(...)
     .AddEntityFrameworkStoresWithIdentity<AuthDbContext>();  // PulseAuth's extension
 ```
+
+---
+
+## Running the tests
+
+```bash
+dotnet test PulseAuth.sln
+```
+
+- `tests/PulseAuth.Tests` — end-to-end tests of the OAuth2/OIDC endpoints against a real Kestrel
+  server on a random local port (in-memory stores).
+- `tests/PulseAuth.EntityFramework.Tests` — the EF Core stores against SQLite (a temporary database
+  file per test, so concurrent requests use separate connections like in production): hashed
+  storage, atomic one-time use, refresh token families, cleanup and legacy (≤ 1.2.x) rows.
 
 ---
 

@@ -61,4 +61,17 @@ public class EfClientStore : IClientStore
             Claims                   = entity.Claims.ToDictionary(c => c.Type, c => c.Value),
         };
     }
+
+    /// <summary>
+    /// Returns true if any enabled client lists the origin in its allowed CORS origins.
+    /// </summary>
+    public async Task<bool> IsOriginAllowedAsync(string origin, CancellationToken ct = default)
+    {
+        var normalized = origin.TrimEnd('/');
+        var withSlash  = normalized + "/";
+        return await _db.Clients
+            .AsNoTracking()
+            .Where(c => c.Enabled)
+            .AnyAsync(c => c.CorsOrigins.Any(o => o.Origin == normalized || o.Origin == withSlash), ct);
+    }
 }

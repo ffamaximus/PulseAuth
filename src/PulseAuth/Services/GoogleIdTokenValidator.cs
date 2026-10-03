@@ -74,10 +74,16 @@ public sealed class GoogleIdTokenValidator : IExternalTokenValidator
             if (string.IsNullOrEmpty(sub))
                 return null;
 
+            // Only trust the e-mail address if Google says it is verified. An unverified address
+            // must never be stored as the user's e-mail (it could later be used to link accounts).
+            var emailVerified = string.Equals(Claim(principal, "email_verified"), "true", StringComparison.OrdinalIgnoreCase);
+            var email = emailVerified
+                ? Claim(principal, JwtRegisteredClaimNames.Email) ?? Claim(principal, ClaimTypes.Email)
+                : null;
+
             return new ExternalIdentity(
                 SubjectId:  sub,
-                Email:      Claim(principal, JwtRegisteredClaimNames.Email)
-                         ?? Claim(principal, ClaimTypes.Email),
+                Email:      email,
                 Name:       Claim(principal, JwtRegisteredClaimNames.Name)
                          ?? Claim(principal, ClaimTypes.Name),
                 GivenName:  Claim(principal, JwtRegisteredClaimNames.GivenName)
