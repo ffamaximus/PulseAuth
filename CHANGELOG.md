@@ -15,10 +15,28 @@
   (`IUserAuthenticationService.GetSecurityStampAsync`, `ValidateSecurityStampOnRefresh`).
 - CORS origin checks are cached by the EF client store (`CorsOriginCacheDuration`, default 1 min).
 
+### OpenID Connect conformance (Basic OP pre-check)
+Fixes found while preparing the OpenID Foundation conformance suite (`oidcc-basic-certification-test-plan`):
+- ID tokens from the code flow carry **`auth_time`** (time of the user's sign-in), kept unchanged on refresh.
+- **Authorization code reuse** revokes the refresh tokens issued with that code (and their rotations).
+- The authorize endpoint accepts **POST**; a missing `response_type` returns `invalid_request`;
+  `request` / `request_uri` are rejected with `request_not_supported` / `request_uri_not_supported`;
+  OpenID requests must always send `redirect_uri`.
+- UserInfo accepts **POST** and the token in the form body (`access_token`); errors carry a
+  `WWW-Authenticate: Bearer error="invalid_token"` challenge.
+- Token responses send `Cache-Control: no-store` / `Pragma: no-cache`.
+- Discovery publishes `response_modes_supported`, `claims_parameter_supported`,
+  `request_parameter_supported` and `request_uri_parameter_supported` (`false`; the default when
+  omitted is `true`) and a fuller `claims_supported`.
+- New option `IgnoreUnknownScopes` (default `false`): unknown scopes are dropped instead of failing.
+- Consumed authorization codes are kept until they expire (needed to detect reuse).
+- New sample `samples/PulseAuth.ConformanceHost` + guide to run the suite.
+
 ### ⚠️ Database migration required (EF stores)
 New tables `PulseAuth_ReferenceTokens` and `PulseAuth_Consents`, new columns
-`PulseAuth_RefreshTokens.UserStamp`, `PulseAuth_Clients.AccessTokenType` and
-`PulseAuth_Clients.AllowIntrospection` (all with defaults; existing data keeps working):
+`PulseAuth_RefreshTokens.UserStamp`, `PulseAuth_RefreshTokens.AuthTime`,
+`PulseAuth_AuthorizationCodes.AuthTime`, `PulseAuth_Clients.AccessTokenType` and
+`PulseAuth_Clients.AllowIntrospection` (all nullable or with defaults; existing data keeps working):
 
 ```bash
 dotnet ef migrations add PulseAuth_1_4_0 --context <YourDbContext>

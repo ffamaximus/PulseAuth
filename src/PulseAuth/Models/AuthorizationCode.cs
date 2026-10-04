@@ -40,4 +40,10 @@ public class AuthorizationCode
 
     /// <summary>Whether the code has already been exchanged.</summary>
     public bool IsConsumed { get; set; }
+
+    /// <summary>
+    /// When the user authenticated (1.4.0+). Emitted as the <c>auth_time</c> claim of the ID token
+    /// (required by OIDC when <c>max_age</c> is used). Null when unknown.
+    /// </summary>
+    public DateTime? AuthTime { get; set; }
 }

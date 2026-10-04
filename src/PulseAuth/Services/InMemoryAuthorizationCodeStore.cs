@@ -44,7 +44,7 @@ public class InMemoryAuthorizationCodeStore : IAuthorizationCodeStore
                 CodeChallenge = c.CodeChallenge, CodeChallengeMethod = c.CodeChallengeMethod,
                 Scopes = c.Scopes.ToArray(), RedirectUri = c.RedirectUri, Nonce = c.Nonce,
                 SessionId = c.SessionId, CreatedAt = c.CreatedAt, ExpiresAt = c.ExpiresAt,
-                IsConsumed = c.IsConsumed,
+                IsConsumed = c.IsConsumed, AuthTime = c.AuthTime,
             });
         }
     }
@@ -92,7 +92,9 @@ public class InMemoryAuthorizationCodeStore : IAuthorizationCodeStore
     public Task RemoveExpiredAsync(CancellationToken ct = default)
     {
         var now     = DateTime.UtcNow;
-        var expired = _codes.Where(kvp => kvp.Value.ExpiresAt < now || kvp.Value.IsConsumed)
+        // Consumed codes are kept until they expire so a replay is detected as code reuse
+        // (which revokes the tokens issued with it) instead of looking unknown.
+        var expired = _codes.Where(kvp => kvp.Value.ExpiresAt < now)
                             .Select(kvp => kvp.Key)
                             .ToList();
 

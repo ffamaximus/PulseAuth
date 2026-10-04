@@ -46,14 +46,15 @@ public static class EndpointRouteBuilderExtensions
            .WithCors(app, options, "/.well-known/jwks", isPublic: true)
            .WithName("PulseAuth.Jwks");
 
-        // Authorize endpoint (browser navigation — no CORS)
-        app.MapGet($"{prefix}/authorize", (HttpContext ctx,
+        // Authorize endpoint (browser navigation — no CORS). GET and POST (OIDC Core §3.1.2.1).
+        app.MapMethods($"{prefix}/authorize", [HttpMethods.Get, HttpMethods.Post], (HttpContext ctx,
             IOptions<PulseAuthOptions> opts,
             AuthorizeRequestValidator validator,
             IAuthorizationCodeStore codes,
             IConsentStore consents,
             CancellationToken ct) =>
             AuthorizeEndpoint.HandleAsync(ctx, opts, validator, codes, consents, ct))
+           .DisableAntiforgery()
            .WithName("PulseAuth.Authorize");
 
         // Token endpoint
@@ -72,14 +73,15 @@ public static class EndpointRouteBuilderExtensions
            .WithRateLimit(options)
            .WithName("PulseAuth.Token");
 
-        // UserInfo endpoint
-        app.MapGet($"{prefix}/userinfo", (HttpContext ctx,
+        // UserInfo endpoint (GET and POST — OIDC Core §5.3.1)
+        app.MapMethods($"{prefix}/userinfo", [HttpMethods.Get, HttpMethods.Post], (HttpContext ctx,
             IOptions<PulseAuthOptions> opts,
             AccessTokenValidator accessTokens,
             IUserAuthenticationService users,
             CancellationToken ct) =>
             UserInfoEndpoint.HandleAsync(ctx, opts, accessTokens, users, ct))
            .AllowAnonymous()
+           .DisableAntiforgery()
            .WithCors(app, options, $"{prefix}/userinfo", isPublic: false)
            .WithRateLimit(options)
            .WithName("PulseAuth.UserInfo");

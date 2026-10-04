@@ -40,6 +40,7 @@ public class EfAuthorizationCodeStore : IAuthorizationCodeStore
             RedirectUri         = code.RedirectUri,
             Nonce               = code.Nonce,
             SessionId           = code.SessionId,
+            AuthTime            = code.AuthTime,
             CreatedAt           = code.CreatedAt,
             ExpiresAt           = code.ExpiresAt,
         });
@@ -75,6 +76,7 @@ public class EfAuthorizationCodeStore : IAuthorizationCodeStore
             CreatedAt           = e.CreatedAt,
             ExpiresAt           = e.ExpiresAt,
             IsConsumed          = e.IsConsumed,
+            AuthTime            = e.AuthTime,
         };
     }
 
@@ -116,7 +118,8 @@ public class EfAuthorizationCodeStore : IAuthorizationCodeStore
     {
         var cutoff = DateTime.UtcNow;
         await _db.AuthorizationCodes
-            .Where(c => c.ExpiresAt < cutoff || c.IsConsumed)
+            // Consumed codes are kept until they expire so a replay is detected as code reuse.
+            .Where(c => c.ExpiresAt < cutoff)
             .ExecuteDeleteAsync(ct);
     }
 }

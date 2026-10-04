@@ -89,9 +89,12 @@ public class ReferenceTokenAndConsentStoreTests
         {
             Token = "rt", ClientId = "spa", SubjectId = "alice", Scopes = ["openid"],
             ExpiresAt = DateTime.UtcNow.AddDays(1), UserStamp = "stamp-hash",
+            AuthTime = new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc),
         });
 
-        Assert.Equal("stamp-hash", (await store.FindByTokenAsync("rt"))!.UserStamp);
+        var found = (await store.FindByTokenAsync("rt"))!;
+        Assert.Equal("stamp-hash", found.UserStamp);
+        Assert.Equal(new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc), found.AuthTime);
     }
 
     [Fact]

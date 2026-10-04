@@ -41,6 +41,12 @@ public class RefreshToken
     public string? UserStamp { get; set; }
 
     /// <summary>
+    /// When the user originally authenticated (1.4.0+). Carried across rotations so ID tokens
+    /// issued on refresh keep the original <c>auth_time</c> (OIDC Core §12.2).
+    /// </summary>
+    public DateTime? AuthTime { get; set; }
+
+    /// <summary>
     /// Stable, non-reversible identifier of a refresh token value: base64url(SHA-256(token)).
     /// Used to link rotations (<see cref="PreviousTokenId"/>) without storing secrets.
     /// </summary>

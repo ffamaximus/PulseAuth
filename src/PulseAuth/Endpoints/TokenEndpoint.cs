@@ -30,6 +30,10 @@ internal static class TokenEndpoint
     {
         var options = optionsAccessor.Value;
 
+        // Token responses (success AND error) must never be cached — RFC 6749 §5.1 / OIDC Core §3.1.3.3.
+        ctx.Response.Headers.CacheControl = "no-store";
+        ctx.Response.Headers.Pragma       = "no-cache";
+
         if (!ctx.Request.HasFormContentType)
             return ClientCredentialsReader.NotAForm();
 
@@ -76,6 +80,9 @@ internal static class TokenEndpoint
         var client    = validation.Client!;
         var subject   = validation.SubjectId!;
         var scopes    = validation.Scopes;
+        var authTime  = grantType is GrantTypes.AuthorizationCode or GrantTypes.RefreshToken
+            ? validation.AuthTime
+            : DateTime.UtcNow;
 
         // ── One-time-use enforcement (BEFORE issuing any token) ────────────────
         // The validator only *reads* the grant. Consumption must be an atomic
@@ -84,7 +91,14 @@ internal static class TokenEndpoint
         if (grantType == GrantTypes.AuthorizationCode)
         {
             if (!await codeStore.TryConsumeAsync(code, ct))
+            {
+                // Lost a race with a concurrent exchange of the same code: treat it as reuse.
+                await TokenRequestValidator.HandleCodeReuseAsync(
+                    refreshTokenStore,
+                    new AuthorizationCode { Code = code, ClientId = client.ClientId, SubjectId = subject },
+                    client.ClientId, Logger(ctx), ct);
                 return InvalidGrant("Authorization code has already been used");
+            }
         }
 
         var rotatedRefreshToken = false;
@@ -156,15 +170,16 @@ internal static class TokenEndpoint
         string? idToken = null;
         if (grantType != GrantTypes.ClientCredentials)
         {
-            // auth_time = when the user authenticated. Known for grants that authenticate the user
-            // in this very request (password, social token exchange); omitted otherwise.
+            // auth_time = when the user authenticated: recorded at /authorize for the code flow (and
+            // carried across refresh rotations); "now" for grants that authenticate the user in this
+            // very request (password, social token exchange); omitted when unknown.
             List<System.Security.Claims.Claim>? idTokenClaims = null;
-            if (grantType != GrantTypes.AuthorizationCode && grantType != GrantTypes.RefreshToken)
+            if (authTime is not null)
             {
                 idTokenClaims =
                 [
                     new(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.AuthTime,
-                        DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
+                        new DateTimeOffset(DateTime.SpecifyKind(authTime.Value, DateTimeKind.Utc)).ToUnixTimeSeconds().ToString(),
                         System.Security.Claims.ClaimValueTypes.Integer64),
                 ];
             }
@@ -203,7 +218,12 @@ internal static class TokenEndpoint
                     Scopes    = scopes,
                     // Link rotations into a family (hash only — never the raw previous token)
                     // so reuse of an old token can revoke the whole chain.
-                    PreviousTokenId = rotatedRefreshToken ? RefreshToken.ComputeTokenId(refreshToken) : null,
+                    // The first token of a code exchange is linked to the code, so a replay of the
+                    // code revokes it (and everything rotated from it).
+                    PreviousTokenId = rotatedRefreshToken ? RefreshToken.ComputeTokenId(refreshToken)
+                                    : grantType == GrantTypes.AuthorizationCode ? RefreshToken.ComputeTokenId(code)
+                                    : null,
+                    AuthTime  = authTime,
                     UserStamp = stamp is null ? null : RefreshToken.ComputeTokenId(stamp),
                     CreatedAt = DateTime.UtcNow,
                     ExpiresAt = DateTime.UtcNow.AddSeconds(

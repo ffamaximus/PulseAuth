@@ -78,6 +78,9 @@ public class AuthorizationCodeEntity : PersistedGrantEntity
     /// </summary>
     [MaxLength(200)]
     public string? SessionId { get; set; }
+
+    /// <summary>When the user authenticated (1.4.0+); used for the ID token auth_time.</summary>
+    public DateTime? AuthTime { get; set; }
 }
 
 /// <summary>
@@ -98,6 +101,9 @@ public class RefreshTokenEntity : PersistedGrantEntity
     /// </summary>
     [MaxLength(100)]
     public string? UserStamp { get; set; }
+
+    /// <summary>When the user originally authenticated (1.4.0+); used for the ID token auth_time.</summary>
+    public DateTime? AuthTime { get; set; }
 }
 
 /// <summary>

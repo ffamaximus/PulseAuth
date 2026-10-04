@@ -25,6 +25,18 @@ internal static class AuthorizeEndpoint
         CancellationToken            ct)
     {
         var options = optionsAccessor.Value;
+
+        // OIDC Core §3.1.2.1: the authorization endpoint MUST support GET and POST. Form parameters
+        // are copied into the query so the rest of the flow (and the login returnUrl) is identical.
+        if (HttpMethods.IsPost(ctx.Request.Method))
+        {
+            if (!ctx.Request.HasFormContentType)
+                return Results.BadRequest(new { error = Constants.OAuthErrors.InvalidRequest, error_description = "POST requests must use application/x-www-form-urlencoded" });
+
+            var form = await ctx.Request.ReadFormAsync(ct);
+            ctx.Request.Query = new QueryCollection(form.ToDictionary(kv => kv.Key, kv => kv.Value));
+        }
+
         var q       = ctx.Request.Query;
 
         var clientId           = q["client_id"].ToString();
@@ -50,6 +62,13 @@ internal static class AuthorizeEndpoint
 
         var client           = validation.Client!;
         var trustedRedirect  = validation.ValidatedRedirectUri!;
+
+        // Request objects (JAR) are not supported: reject explicitly instead of silently ignoring
+        // parameters that may carry security-relevant values (OIDC Core §6).
+        if (q.ContainsKey("request"))
+            return BuildErrorResponse(trustedRedirect, state, "request_not_supported", "The request parameter is not supported");
+        if (q.ContainsKey("request_uri"))
+            return BuildErrorResponse(trustedRedirect, state, "request_uri_not_supported", "The request_uri parameter is not supported");
 
         // OIDC Core §3.1.2.1: "none" must not be combined with any other prompt value.
         if (prompt.Contains("none") && prompt.Count > 1)
@@ -120,6 +139,7 @@ internal static class AuthorizeEndpoint
             Scopes              = validation.RequestedScopes,
             RedirectUri         = string.IsNullOrEmpty(redirectUri) ? null : redirectUri,
             Nonce               = string.IsNullOrEmpty(nonce) ? null : nonce,
+            AuthTime            = authResult.Properties?.IssuedUtc?.UtcDateTime,
             CreatedAt           = DateTime.UtcNow,
             ExpiresAt           = DateTime.UtcNow.AddSeconds(client.AuthorizationCodeLifetime),
         };

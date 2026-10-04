@@ -151,4 +151,13 @@ public class PulseAuthOptions
     /// Scopes that are always included in the discovery document.
     /// </summary>
     public IList<string> SupportedScopes { get; set; } = ["openid", "profile", "email", "offline_access"];
+
+    /// <summary>
+    /// When <c>true</c>, requested scopes the server does not know at all (not in
+    /// <see cref="SupportedScopes"/> and not allowed for the client) are silently dropped, as
+    /// OIDC Core §3.1.2.1 recommends ("scope values that are not understood SHOULD be ignored"),
+    /// instead of failing the request with <c>invalid_scope</c>. Known scopes the client is not
+    /// allowed to use are always rejected. Default: <c>false</c> (strict).
+    /// </summary>
+    public bool IgnoreUnknownScopes { get; set; } = false;
 }

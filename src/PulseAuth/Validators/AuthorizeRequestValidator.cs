@@ -80,9 +80,13 @@ public class AuthorizeRequestValidator
     {
         _clients        = clients;
         _allowPlainPkce = options?.Value.AllowPlainPkce ?? false;
+        _ignoreUnknownScopes = options?.Value.IgnoreUnknownScopes ?? false;
+        _supportedScopes     = options?.Value.SupportedScopes.ToHashSet(StringComparer.Ordinal) ?? [];
     }
 
     private readonly bool _allowPlainPkce;
+    private readonly bool _ignoreUnknownScopes;
+    private readonly HashSet<string> _supportedScopes;
 
     /// <summary>
     /// Validates the parameters of an authorization request. This method checks for the presence and validity of required parameters such as client_id, response_type, redirect_uri, scope, code_challenge, and code_challenge_method. It retrieves the client information from the client store based on the provided client_id and validates that the client is enabled and authorized to use the requested response type and scopes. It also validates the redirect_uri against the client's registered redirect URIs and checks PKCE requirements if applicable. The method returns an AuthorizeValidationResult indicating whether the validation was successful or if there were any errors that should be communicated back to the client.
@@ -118,8 +122,10 @@ public class AuthorizeRequestValidator
             if (!client.RedirectUris.Any(u => string.Equals(u, redirectUri, StringComparison.Ordinal)))
                 return AuthorizeValidationResult.Fail(OAuthErrors.InvalidRequest, "Invalid redirect_uri");
         }
-        else if (client.RedirectUris.Count == 1)
+        else if (client.RedirectUris.Count == 1 && !IsOpenIdRequest(scope))
         {
+            // Plain OAuth2 allows omitting redirect_uri when exactly one is registered
+            // (RFC 6749 §3.1.2.3). OpenID Connect requests MUST always send it (OIDC Core §3.1.2.1).
             redirectUri = client.RedirectUris.First();
         }
         else
@@ -131,6 +137,9 @@ public class AuthorizeRequestValidator
         var validatedRedirectUri = redirectUri;
 
         // Validate response_type
+        if (string.IsNullOrEmpty(responseType))
+            return AuthorizeValidationResult.Fail(OAuthErrors.InvalidRequest, "response_type is required", validatedRedirectUri);
+
         if (responseType != "code")
             return AuthorizeValidationResult.Fail(OAuthErrors.UnsupportedResponseType, "Only 'code' response type is supported", validatedRedirectUri);
 
@@ -153,6 +162,10 @@ public class AuthorizeRequestValidator
         if (requestedScopes.Count == 0)
             requestedScopes = [StandardScopes.OpenId];
 
+        if (_ignoreUnknownScopes)
+            requestedScopes.RemoveAll(s => !_supportedScopes.Contains(s) && !client.AllowedScopes.Contains(s) &&
+                                           s != StandardScopes.OfflineAccess);
+
         var invalidScopes = requestedScopes
             .Except([StandardScopes.OfflineAccess]) // handled separately
             .Where(s => !client.AllowedScopes.Contains(s))
@@ -167,4 +180,8 @@ public class AuthorizeRequestValidator
 
         return AuthorizeValidationResult.Success(client, requestedScopes.AsReadOnly(), validatedRedirectUri);
     }
+
+    private static bool IsOpenIdRequest(string? scope)
+        => !string.IsNullOrEmpty(scope) &&
+           scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains(StandardScopes.OpenId);
 }

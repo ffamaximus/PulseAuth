@@ -47,6 +47,7 @@ public class EfRefreshTokenStore : IRefreshTokenStore
             ExpiresAt       = token.ExpiresAt,
             PreviousTokenId = token.PreviousTokenId,
             UserStamp       = token.UserStamp,
+            AuthTime        = token.AuthTime,
         });
         await _db.SaveChangesAsync(ct);
     }
@@ -77,6 +78,7 @@ public class EfRefreshTokenStore : IRefreshTokenStore
             IsConsumed      = e.IsConsumed,
             PreviousTokenId = e.PreviousTokenId,
             UserStamp       = e.UserStamp,
+            AuthTime        = e.AuthTime,
         };
     }
 

@@ -55,12 +55,26 @@ public class TokenValidationResult
     /// </summary>
     public bool IsRefreshTokenReuseWithinGracePeriod { get; private init; }
 
+    /// <summary>
+    /// When the user authenticated, if known (authorization code / refresh token grants).
+    /// Emitted as the ID token <c>auth_time</c> claim.
+    /// </summary>
+    public DateTime? AuthTime { get; private init; }
+
     internal static TokenValidationResult SuccessRefresh(Client client, RefreshToken rt, bool reuseWithinGracePeriod)
         => new()
         {
             IsValid = true, Client = client, SubjectId = rt.SubjectId,
             Scopes = rt.Scopes.ToList().AsReadOnly(), RefreshTokenEntity = rt,
             IsRefreshTokenReuseWithinGracePeriod = reuseWithinGracePeriod,
+            AuthTime = rt.AuthTime,
+        };
+
+    internal static TokenValidationResult SuccessCode(Client client, AuthorizationCode code)
+        => new()
+        {
+            IsValid = true, Client = client, SubjectId = code.SubjectId,
+            Scopes = code.Scopes.ToList().AsReadOnly(), Nonce = code.Nonce, AuthTime = code.AuthTime,
         };
 
     /// <summary>
@@ -207,7 +221,12 @@ public class TokenRequestValidator
             return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "Authorization code not found");
 
         if (authCode.IsConsumed)
+        {
+            // Code replay: the code was intercepted or the client is misbehaving. Revoke the
+            // tokens issued with it (RFC 6749 §4.1.2) before rejecting the request.
+            await HandleCodeReuseAsync(_refreshTokens, authCode, client.ClientId, _logger, ct);
             return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "Authorization code has already been used");
+        }
 
         if (authCode.ExpiresAt < DateTime.UtcNow)
             return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "Authorization code has expired");
@@ -229,11 +248,7 @@ public class TokenRequestValidator
                 return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "Invalid code_verifier");
         }
 
-        return TokenValidationResult.Success(
-            client,
-            authCode.SubjectId,
-            authCode.Scopes.ToList().AsReadOnly(),
-            authCode.Nonce);
+        return TokenValidationResult.SuccessCode(client, authCode);
     }
 
     // ── Client Credentials ───────────────────────────────────────────────────
@@ -345,6 +360,32 @@ public class TokenRequestValidator
             "Refresh token reuse detected (subject {SubjectId}, client {ClientId}, presented by client {PresentingClientId}). " +
             "Revoked {RevokedCount} token(s) of the rotation family; the user must sign in again.",
             reusedToken.SubjectId, reusedToken.ClientId, presentingClientId,
+            revoked >= 0 ? revoked.ToString() : "all (subject + client)");
+    }
+
+    /// <summary>
+    /// Revokes the refresh tokens issued from a replayed authorization code. The first refresh token
+    /// of a code exchange is linked to the code (<see cref="RefreshToken.PreviousTokenId"/> = hash of
+    /// the code), so the whole rotation family hanging from it is revoked.
+    /// </summary>
+    internal static async Task HandleCodeReuseAsync(
+        IRefreshTokenStore store,
+        AuthorizationCode code,
+        string presentingClientId,
+        ILogger? logger,
+        CancellationToken ct)
+    {
+        var revoked = await store.RevokeFamilyAsync(new RefreshToken
+        {
+            Token     = code.Code,
+            ClientId  = code.ClientId,
+            SubjectId = code.SubjectId,
+        }, ct);
+
+        logger?.LogWarning(
+            "Authorization code reuse detected (subject {SubjectId}, client {ClientId}, presented by client {PresentingClientId}). " +
+            "Revoked {RevokedCount} refresh token(s) issued with it.",
+            code.SubjectId, code.ClientId, presentingClientId,
             revoked >= 0 ? revoked.ToString() : "all (subject + client)");
     }
 

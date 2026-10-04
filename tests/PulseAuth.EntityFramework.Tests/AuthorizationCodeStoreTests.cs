@@ -99,7 +99,7 @@ public class AuthorizationCodeStoreTests
     }
 
     [Fact]
-    public async Task RemoveExpired_DeletesExpiredAndConsumedCodes()
+    public async Task RemoveExpired_DeletesExpiredCodes_KeepsConsumedUntilExpiry()
     {
         using var db = new SqliteTestDatabase();
         await using var ctx = db.CreateContext();
@@ -113,6 +113,23 @@ public class AuthorizationCodeStoreTests
 
         Assert.NotNull(await store.FindByCodeAsync("valid"));
         Assert.Null(await store.FindByCodeAsync("expired"));
-        Assert.Null(await store.FindByCodeAsync("consumed"));
+        // Kept until it expires so a replay is detected as code reuse (and revokes its tokens).
+        Assert.True((await store.FindByCodeAsync("consumed"))!.IsConsumed);
+    }
+
+    [Fact]
+    public async Task AuthTime_RoundTrips()
+    {
+        using var db = new SqliteTestDatabase();
+        await using var ctx = db.CreateContext();
+        var store    = new EfAuthorizationCodeStore(ctx);
+        var authTime = new DateTime(2026, 10, 1, 12, 30, 15, DateTimeKind.Utc);
+        var code     = NewCode("with-auth-time");
+        code.AuthTime = authTime;
+        await store.StoreAsync(code);
+        await store.StoreAsync(NewCode("without-auth-time"));
+
+        Assert.Equal(authTime, (await store.FindByCodeAsync("with-auth-time"))!.AuthTime);
+        Assert.Null((await store.FindByCodeAsync("without-auth-time"))!.AuthTime);
     }
 }
