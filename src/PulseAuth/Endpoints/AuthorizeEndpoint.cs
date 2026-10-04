@@ -140,6 +140,9 @@ internal static class AuthorizeEndpoint
             RedirectUri         = string.IsNullOrEmpty(redirectUri) ? null : redirectUri,
             Nonce               = string.IsNullOrEmpty(nonce) ? null : nonce,
             AuthTime            = authResult.Properties?.IssuedUtc?.UtcDateTime,
+            // The login decides the authentication level by adding an "acr" claim when signing in
+            // (acr_values is only a preference of the client, OIDC Core §3.1.2.1).
+            Acr                 = authResult.Principal.FindFirst("acr")?.Value ?? options.DefaultAcr,
             CreatedAt           = DateTime.UtcNow,
             ExpiresAt           = DateTime.UtcNow.AddSeconds(client.AuthorizationCodeLifetime),
         };

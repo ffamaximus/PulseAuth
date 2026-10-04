@@ -82,6 +82,16 @@ internal static class UserInfoEndpoint
             AddIfNotNull(result, "family_name",        user.FamilyName);
             AddIfNotNull(result, "picture",            user.Picture);
             AddIfNotNull(result, "preferred_username", user.Username);
+            AddIfNotNull(result, "middle_name",        user.MiddleName);
+            AddIfNotNull(result, "nickname",           user.Nickname);
+            AddIfNotNull(result, "profile",            user.ProfileUrl);
+            AddIfNotNull(result, "website",            user.Website);
+            AddIfNotNull(result, "gender",             user.Gender);
+            AddIfNotNull(result, "birthdate",          user.Birthdate);
+            AddIfNotNull(result, "zoneinfo",           user.ZoneInfo);
+            AddIfNotNull(result, "locale",             user.Locale);
+            if (user.UpdatedAt is { } updatedAt)
+                result["updated_at"] = updatedAt.ToUnixTimeSeconds();   // JSON number (OIDC Core §5.1)
         }
 
         if (scopes.Contains(StandardScopes.Email))

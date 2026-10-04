@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.0
+## 1.4.0 — 2026-10-04
 
 ### New features
 - **Consent screen**: `Client.RequireConsent` is now enforced. `IConsentInteractionService` gives the
@@ -18,7 +18,9 @@
 ### OpenID Connect conformance (Basic OP pre-check)
 Fixes found while preparing the OpenID Foundation conformance suite (`oidcc-basic-certification-test-plan`):
 - ID tokens from the code flow carry **`auth_time`** (time of the user's sign-in), kept unchanged on refresh.
-- **Authorization code reuse** revokes the refresh tokens issued with that code (and their rotations).
+- **Authorization code reuse** revokes the refresh tokens issued with that code (and their rotations)
+  and the user's reference access tokens for that client. JWT access tokens cannot be revoked and
+  expire normally (prefer reference tokens or short lifetimes where this matters).
 - The authorize endpoint accepts **POST**; a missing `response_type` returns `invalid_request`;
   `request` / `request_uri` are rejected with `request_not_supported` / `request_uri_not_supported`;
   OpenID requests must always send `redirect_uri`.
@@ -28,6 +30,15 @@ Fixes found while preparing the OpenID Foundation conformance suite (`oidcc-basi
 - Discovery publishes `response_modes_supported`, `claims_parameter_supported`,
   `request_parameter_supported` and `request_uri_parameter_supported` (`false`; the default when
   omitted is `true`) and a fuller `claims_supported`.
+- `UserInfo` supports the remaining OIDC standard `profile` claims (`middle_name`, `nickname`,
+  `profile`, `website`, `gender`, `birthdate`, `zoneinfo`, `locale`, `updated_at` as a number),
+  returned by the UserInfo endpoint for the `profile` scope.
+- New option `IncludeScopeClaimsInIdToken` (default `true`, unchanged behaviour). Set it to `false`
+  (recommended) to return profile / email / phone claims only from UserInfo, as OIDC Core §5.4
+  intends; application claims stay in the ID token.
+- **`acr` support**: the login sets the authentication level by adding an `acr` claim when signing
+  in (or `DefaultAcr`); it is emitted in the ID token, and `AcrValuesSupported` is published as
+  `acr_values_supported`.
 - New option `IgnoreUnknownScopes` (default `false`): unknown scopes are dropped instead of failing.
 - Consumed authorization codes are kept until they expire (needed to detect reuse).
 - New sample `samples/PulseAuth.ConformanceHost` + guide to run the suite.
@@ -35,7 +46,7 @@ Fixes found while preparing the OpenID Foundation conformance suite (`oidcc-basi
 ### ⚠️ Database migration required (EF stores)
 New tables `PulseAuth_ReferenceTokens` and `PulseAuth_Consents`, new columns
 `PulseAuth_RefreshTokens.UserStamp`, `PulseAuth_RefreshTokens.AuthTime`,
-`PulseAuth_AuthorizationCodes.AuthTime`, `PulseAuth_Clients.AccessTokenType` and
+`PulseAuth_AuthorizationCodes.AuthTime`, `PulseAuth_AuthorizationCodes.Acr`, `PulseAuth_Clients.AccessTokenType` and
 `PulseAuth_Clients.AllowIntrospection` (all nullable or with defaults; existing data keeps working):
 
 ```bash

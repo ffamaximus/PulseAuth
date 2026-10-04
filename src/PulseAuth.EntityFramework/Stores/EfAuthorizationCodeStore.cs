@@ -41,6 +41,7 @@ public class EfAuthorizationCodeStore : IAuthorizationCodeStore
             Nonce               = code.Nonce,
             SessionId           = code.SessionId,
             AuthTime            = code.AuthTime,
+            Acr                 = code.Acr,
             CreatedAt           = code.CreatedAt,
             ExpiresAt           = code.ExpiresAt,
         });
@@ -77,6 +78,7 @@ public class EfAuthorizationCodeStore : IAuthorizationCodeStore
             ExpiresAt           = e.ExpiresAt,
             IsConsumed          = e.IsConsumed,
             AuthTime            = e.AuthTime,
+            Acr                 = e.Acr,
         };
     }
 

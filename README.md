@@ -264,6 +264,27 @@ dotnet ef database update --context PulseAuthDbContext
 
 > **Option A creates both `AspNet*` and `PulseAuth_*` tables in a single `dotnet ef database update`.** The table prefixes prevent naming collisions even in the same database.
 
+#### 5.3 Upgrading an existing database to 1.4.0
+
+1.4.0 adds two tables and a few nullable / defaulted columns — existing rows keep working.
+After updating the packages, generate one migration from **your** startup project:
+
+```bash
+dotnet ef migrations add PulseAuth_1_4_0 --context <YourDbContext>
+dotnet ef migrations script --idempotent --context <YourDbContext>   # review the SQL first
+dotnet ef database update --context <YourDbContext>
+```
+
+| Change | Type |
+|---|---|
+| `PulseAuth_ReferenceTokens`, `PulseAuth_Consents` | new tables |
+| `PulseAuth_RefreshTokens.UserStamp`, `.AuthTime` | new nullable columns |
+| `PulseAuth_AuthorizationCodes.AuthTime`, `.Acr` | new nullable columns |
+| `PulseAuth_Clients.AccessTokenType`, `.AllowIntrospection` | new columns with defaults (`Jwt`, `false`) |
+
+Review the generated migration: it must only **add** tables/columns. If it drops or renames
+anything, stop and check that your context inherits the PulseAuth model configuration.
+
 ---
 
 ## Hashing client secrets
@@ -761,6 +782,40 @@ be introspected by the client they belong to.
 
 ---
 
+## OpenID Connect compliance options
+
+```csharp
+builder.Services.AddPulseAuth(opts =>
+{
+    // Profile / email / phone claims only from /connect/userinfo, not copied into the ID token
+    // (OIDC Core §5.4). Default true for backward compatibility; false is recommended.
+    opts.IncludeScopeClaimsInIdToken = false;
+
+    // Authentication levels you support (published as acr_values_supported). The login page sets
+    // the level actually achieved by adding an "acr" claim when signing the user in.
+    opts.AcrValuesSupported = ["1", "2"];
+    opts.DefaultAcr         = "1";       // used when the login does not set one
+
+    // Unknown scopes are ignored instead of failing with invalid_scope (OIDC Core §3.1.2.1).
+    opts.IgnoreUnknownScopes = true;
+});
+```
+
+```csharp
+// Login page: sign in with the authentication level achieved
+var claims = new List<Claim> { new("sub", user.Id), new("acr", usedMfa ? "2" : "1") };
+await HttpContext.SignInAsync(new ClaimsPrincipal(new ClaimsIdentity(claims, "pwd")));
+```
+
+`UserInfo` also carries the remaining standard profile claims (`MiddleName`, `Nickname`,
+`ProfileUrl`, `Website`, `Gender`, `Birthdate`, `ZoneInfo`, `Locale`, `UpdatedAt`).
+
+PulseAuth 1.4.0 passes the OpenID Foundation **Basic OP** conformance plan
+(`oidcc-basic-certification-test-plan`) with no failures. To run the suite yourself see
+[`samples/PulseAuth.ConformanceHost`](samples/PulseAuth.ConformanceHost/README.md).
+
+---
+
 ## Password change and "sign out everywhere"
 
 Refresh tokens remember the user's security stamp (`IUserAuthenticationService.GetSecurityStampAsync`,
@@ -901,6 +956,8 @@ dotnet test PulseAuth.sln
 - `tests/PulseAuth.EntityFramework.Tests` — the EF Core stores against SQLite (a temporary database
   file per test, so concurrent requests use separate connections like in production): hashed
   storage, atomic one-time use, refresh token families, cleanup and legacy (≤ 1.2.x) rows.
+- `tests/PulseAuth.Tests/OidcConformanceTests.cs` — regression tests for the behaviours checked by
+  the OpenID Foundation Basic OP conformance plan.
 
 ---
 

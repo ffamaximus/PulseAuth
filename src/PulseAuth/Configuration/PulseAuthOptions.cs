@@ -160,4 +160,28 @@ public class PulseAuthOptions
     /// allowed to use are always rejected. Default: <c>false</c> (strict).
     /// </summary>
     public bool IgnoreUnknownScopes { get; set; } = false;
+
+    /// <summary>
+    /// When <c>true</c> (default, PulseAuth &lt;= 1.3 behaviour) the standard claims of the
+    /// <c>profile</c>, <c>email</c> and <c>phone</c> scopes are also copied into the ID token.
+    /// When <c>false</c> they are returned only by the UserInfo endpoint, as OIDC Core §5.4 intends
+    /// for the code flow: the ID token stays small and personal data is not exposed to parties the
+    /// ID token is forwarded to. Application claims (<see cref="Models.UserInfo.AdditionalClaims"/>)
+    /// are always included. Recommended: <c>false</c>.
+    /// </summary>
+    public bool IncludeScopeClaimsInIdToken { get; set; } = true;
+
+    /// <summary>
+    /// Authentication Context Class References this server can satisfy, published as
+    /// <c>acr_values_supported</c> in discovery (omitted when empty). Example: <c>["1", "2"]</c>
+    /// (ISO/IEC 29115 levels) or your own URNs such as <c>urn:myapp:acr:mfa</c>.
+    /// </summary>
+    public IList<string> AcrValuesSupported { get; set; } = [];
+
+    /// <summary>
+    /// <c>acr</c> emitted in ID tokens when the login did not set one. The login page sets the real
+    /// value by adding an <c>acr</c> claim to the principal it signs in (for example a higher level
+    /// after MFA). <c>null</c> (default): no <c>acr</c> unless the login sets it.
+    /// </summary>
+    public string? DefaultAcr { get; set; }
 }

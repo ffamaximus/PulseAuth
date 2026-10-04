@@ -54,6 +54,10 @@ builder.Services
         // "address" (and any other unknown scope) is ignored instead of failing the request,
         // as OIDC Core §3.1.2.1 recommends; the suite requests it in some scope tests.
         o.IgnoreUnknownScopes = true;
+        // profile / email / phone claims only from UserInfo (OIDC Core §5.4), not in the ID token.
+        o.IncludeScopeClaimsInIdToken = false;
+        // Single-factor login of the test user = ISO/IEC 29115 level "1" (set by the login below).
+        o.AcrValuesSupported = ["1"];
     })
     .AddCookieAuthentication(o =>
     {
@@ -112,7 +116,9 @@ app.MapGet("/Account/Login", async (HttpContext ctx, string? returnUrl, bool? co
             """, "text/html");
     }
 
-    var identity = new ClaimsIdentity([new Claim("sub", ConformanceUserService.SubjectId)], "conformance");
+    // "acr" = authentication level achieved by this sign-in (single factor = "1").
+    var identity = new ClaimsIdentity(
+        [new Claim("sub", ConformanceUserService.SubjectId), new Claim("acr", "1")], "conformance");
     await ctx.SignInAsync(new ClaimsPrincipal(identity));
     return Results.Redirect(target);
 });

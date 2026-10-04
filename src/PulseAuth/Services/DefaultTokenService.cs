@@ -127,24 +127,8 @@ public class DefaultTokenService : ITokenService
         var user = await _users.GetUserByIdAsync(subjectId, ct);
         if (user is not null)
         {
-            if (scopeList.Contains(StandardScopes.Profile))
-            {
-                AddIfNotNull(claims, JwtRegisteredClaimNames.Name,         user.Name);
-                AddIfNotNull(claims, JwtRegisteredClaimNames.GivenName,    user.GivenName);
-                AddIfNotNull(claims, JwtRegisteredClaimNames.FamilyName,   user.FamilyName);
-                AddIfNotNull(claims, "picture",                             user.Picture);
-                AddIfNotNull(claims, "preferred_username",                  user.Username);
-            }
-            if (scopeList.Contains(StandardScopes.Email))
-            {
-                AddIfNotNull(claims, JwtRegisteredClaimNames.Email,        user.Email);
-                claims.Add(new("email_verified", user.EmailVerified.ToString().ToLower(), ClaimValueTypes.Boolean));
-            }
-            if (scopeList.Contains(StandardScopes.Phone))
-            {
-                AddIfNotNull(claims, "phone_number",          user.PhoneNumber);
-                claims.Add(new("phone_number_verified", user.PhoneNumberVerified.ToString().ToLower(), ClaimValueTypes.Boolean));
-            }
+            if (_options.IncludeScopeClaimsInIdToken)
+                AddScopeClaims(claims, user, scopeList);
 
             claims.AddRange(WithoutReservedClaims(user.AdditionalClaims));
         }
@@ -161,6 +145,29 @@ public class DefaultTokenService : ITokenService
             signingCredentials: credentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    /// <summary>Standard claims of the profile / email / phone scopes (OIDC Core §5.4).</summary>
+    private static void AddScopeClaims(List<Claim> claims, Models.UserInfo user, List<string> scopeList)
+    {
+        if (scopeList.Contains(StandardScopes.Profile))
+        {
+            AddIfNotNull(claims, JwtRegisteredClaimNames.Name,         user.Name);
+            AddIfNotNull(claims, JwtRegisteredClaimNames.GivenName,    user.GivenName);
+            AddIfNotNull(claims, JwtRegisteredClaimNames.FamilyName,   user.FamilyName);
+            AddIfNotNull(claims, "picture",                             user.Picture);
+            AddIfNotNull(claims, "preferred_username",                  user.Username);
+        }
+        if (scopeList.Contains(StandardScopes.Email))
+        {
+            AddIfNotNull(claims, JwtRegisteredClaimNames.Email,        user.Email);
+            claims.Add(new("email_verified", user.EmailVerified.ToString().ToLower(), ClaimValueTypes.Boolean));
+        }
+        if (scopeList.Contains(StandardScopes.Phone))
+        {
+            AddIfNotNull(claims, "phone_number",          user.PhoneNumber);
+            claims.Add(new("phone_number_verified", user.PhoneNumberVerified.ToString().ToLower(), ClaimValueTypes.Boolean));
+        }
     }
 
     /// <summary>JOSE "typ" header value for JWT access tokens (RFC 9068).</summary>

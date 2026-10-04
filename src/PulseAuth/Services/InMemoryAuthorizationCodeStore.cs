@@ -44,7 +44,7 @@ public class InMemoryAuthorizationCodeStore : IAuthorizationCodeStore
                 CodeChallenge = c.CodeChallenge, CodeChallengeMethod = c.CodeChallengeMethod,
                 Scopes = c.Scopes.ToArray(), RedirectUri = c.RedirectUri, Nonce = c.Nonce,
                 SessionId = c.SessionId, CreatedAt = c.CreatedAt, ExpiresAt = c.ExpiresAt,
-                IsConsumed = c.IsConsumed, AuthTime = c.AuthTime,
+                IsConsumed = c.IsConsumed, AuthTime = c.AuthTime, Acr = c.Acr,
             });
         }
     }

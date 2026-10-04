@@ -46,4 +46,10 @@ public class AuthorizationCode
     /// (required by OIDC when <c>max_age</c> is used). Null when unknown.
     /// </summary>
     public DateTime? AuthTime { get; set; }
+
+    /// <summary>
+    /// Authentication Context Class Reference achieved by the sign-in (1.4.0+), emitted as the
+    /// <c>acr</c> claim of the ID token. Null when unknown.
+    /// </summary>
+    public string? Acr { get; set; }
 }

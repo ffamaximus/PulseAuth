@@ -56,6 +56,11 @@ public class DiscoveryDocument
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? IntrospectionEndpoint { get; set; }
 
+    /// <summary>Supported Authentication Context Class References (omitted when none are configured).</summary>
+    [JsonPropertyName("acr_values_supported")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IEnumerable<string>? AcrValuesSupported { get; set; }
+
     /// <summary>Supported values of the prompt parameter.</summary>
     [JsonPropertyName("prompt_values_supported")]
     public IEnumerable<string> PromptValuesSupported { get; set; } = ["none", "login", "consent"];

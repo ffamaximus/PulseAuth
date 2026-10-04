@@ -81,6 +81,10 @@ public class AuthorizationCodeEntity : PersistedGrantEntity
 
     /// <summary>When the user authenticated (1.4.0+); used for the ID token auth_time.</summary>
     public DateTime? AuthTime { get; set; }
+
+    /// <summary>Authentication context class achieved by the sign-in (1.4.0+); ID token <c>acr</c>.</summary>
+    [MaxLength(200)]
+    public string? Acr { get; set; }
 }
 
 /// <summary>

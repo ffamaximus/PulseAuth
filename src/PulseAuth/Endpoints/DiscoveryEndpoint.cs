@@ -43,8 +43,10 @@ internal static class DiscoveryEndpoint
                                         .Concat(externalValidators.Select(v => v.SupportedGrantType))
                                         .Distinct()
                                         .ToArray(),
-            ClaimsSupported       = ["sub", "iss", "aud", "exp", "iat", "auth_time", "nonce",
-                                     "name", "given_name", "family_name", "picture", "preferred_username",
+            AcrValuesSupported    = options.AcrValuesSupported.Count > 0 ? options.AcrValuesSupported : null,
+            ClaimsSupported       = ["sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "acr",
+                                     "name", "given_name", "family_name", "middle_name", "nickname", "preferred_username",
+                                     "profile", "picture", "website", "gender", "birthdate", "zoneinfo", "locale", "updated_at",
                                      "email", "email_verified", "phone_number", "phone_number_verified"],
         };
 

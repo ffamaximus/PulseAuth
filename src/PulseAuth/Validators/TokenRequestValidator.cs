@@ -61,6 +61,9 @@ public class TokenValidationResult
     /// </summary>
     public DateTime? AuthTime { get; private init; }
 
+    /// <summary>Authentication context class of the sign-in (authorization code grant), if known.</summary>
+    public string? Acr { get; private init; }
+
     internal static TokenValidationResult SuccessRefresh(Client client, RefreshToken rt, bool reuseWithinGracePeriod)
         => new()
         {
@@ -75,6 +78,7 @@ public class TokenValidationResult
         {
             IsValid = true, Client = client, SubjectId = code.SubjectId,
             Scopes = code.Scopes.ToList().AsReadOnly(), Nonce = code.Nonce, AuthTime = code.AuthTime,
+            Acr = code.Acr,
         };
 
     /// <summary>
@@ -224,7 +228,7 @@ public class TokenRequestValidator
         {
             // Code replay: the code was intercepted or the client is misbehaving. Revoke the
             // tokens issued with it (RFC 6749 §4.1.2) before rejecting the request.
-            await HandleCodeReuseAsync(_refreshTokens, authCode, client.ClientId, _logger, ct);
+            await HandleCodeReuseAsync(_refreshTokens, _referenceTokens, authCode, client.ClientId, _logger, ct);
             return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "Authorization code has already been used");
         }
 
@@ -370,6 +374,7 @@ public class TokenRequestValidator
     /// </summary>
     internal static async Task HandleCodeReuseAsync(
         IRefreshTokenStore store,
+        IReferenceTokenStore? referenceTokens,
         AuthorizationCode code,
         string presentingClientId,
         ILogger? logger,
@@ -382,9 +387,16 @@ public class TokenRequestValidator
             SubjectId = code.SubjectId,
         }, ct);
 
+        // Reference (opaque) access tokens are not linked to the code they came from, so all of this
+        // user's reference tokens for the client are revoked: a replayed code means the code — and
+        // possibly the tokens obtained with it — may be in an attacker's hands (RFC 6749 §4.1.2).
+        // JWT access tokens cannot be revoked and simply expire.
+        if (referenceTokens is not null)
+            await referenceTokens.RemoveBySubjectAsync(code.SubjectId, code.ClientId, ct);
+
         logger?.LogWarning(
             "Authorization code reuse detected (subject {SubjectId}, client {ClientId}, presented by client {PresentingClientId}). " +
-            "Revoked {RevokedCount} refresh token(s) issued with it.",
+            "Revoked {RevokedCount} refresh token(s) issued with it and the user's reference access tokens for the client.",
             code.SubjectId, code.ClientId, presentingClientId,
             revoked >= 0 ? revoked.ToString() : "all (subject + client)");
     }

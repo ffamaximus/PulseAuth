@@ -31,6 +31,33 @@ public class UserInfo
     /// <summary>URL of the user's profile picture.</summary>
     public string? Picture { get; set; }
 
+    /// <summary>Middle name(s) (<c>middle_name</c>).</summary>
+    public string? MiddleName { get; set; }
+
+    /// <summary>Casual name (<c>nickname</c>).</summary>
+    public string? Nickname { get; set; }
+
+    /// <summary>URL of the user's profile page (<c>profile</c>).</summary>
+    public string? ProfileUrl { get; set; }
+
+    /// <summary>URL of the user's web page or blog (<c>website</c>).</summary>
+    public string? Website { get; set; }
+
+    /// <summary>Gender (<c>gender</c>), e.g. "female", "male" or another value.</summary>
+    public string? Gender { get; set; }
+
+    /// <summary>Birthday as ISO 8601 <c>YYYY-MM-DD</c> (or <c>0000-MM-DD</c> / <c>YYYY</c>) (<c>birthdate</c>).</summary>
+    public string? Birthdate { get; set; }
+
+    /// <summary>IANA time zone, e.g. "America/Bogota" (<c>zoneinfo</c>).</summary>
+    public string? ZoneInfo { get; set; }
+
+    /// <summary>BCP47 locale, e.g. "es-CO" (<c>locale</c>).</summary>
+    public string? Locale { get; set; }
+
+    /// <summary>When the profile was last updated (<c>updated_at</c>, emitted as seconds since epoch).</summary>
+    public DateTimeOffset? UpdatedAt { get; set; }
+
     /// <summary>Phone number.</summary>
     public string? PhoneNumber { get; set; }
 

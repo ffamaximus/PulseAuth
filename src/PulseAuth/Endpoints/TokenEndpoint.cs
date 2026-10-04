@@ -95,6 +95,7 @@ internal static class TokenEndpoint
                 // Lost a race with a concurrent exchange of the same code: treat it as reuse.
                 await TokenRequestValidator.HandleCodeReuseAsync(
                     refreshTokenStore,
+                    referenceTokenStore,
                     new AuthorizationCode { Code = code, ClientId = client.ClientId, SubjectId = subject },
                     client.ClientId, Logger(ctx), ct);
                 return InvalidGrant("Authorization code has already been used");
@@ -173,16 +174,18 @@ internal static class TokenEndpoint
             // auth_time = when the user authenticated: recorded at /authorize for the code flow (and
             // carried across refresh rotations); "now" for grants that authenticate the user in this
             // very request (password, social token exchange); omitted when unknown.
-            List<System.Security.Claims.Claim>? idTokenClaims = null;
+            var idTokenClaims = new List<System.Security.Claims.Claim>();
             if (authTime is not null)
             {
-                idTokenClaims =
-                [
+                idTokenClaims.Add(
                     new(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.AuthTime,
                         new DateTimeOffset(DateTime.SpecifyKind(authTime.Value, DateTimeKind.Utc)).ToUnixTimeSeconds().ToString(),
-                        System.Security.Claims.ClaimValueTypes.Integer64),
-                ];
+                        System.Security.Claims.ClaimValueTypes.Integer64));
             }
+
+            // acr = authentication level achieved by the sign-in (set by the login or DefaultAcr).
+            if (!string.IsNullOrEmpty(validation.Acr))
+                idTokenClaims.Add(new(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Acr, validation.Acr));
 
             idToken = await tokenService.CreateIdTokenAsync(
                 subject, client.ClientId, validation.Nonce, scopes, idTokenClaims, ct);

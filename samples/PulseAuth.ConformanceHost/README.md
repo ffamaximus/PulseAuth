@@ -76,6 +76,7 @@ Comprueba en el navegador:
   "server": { "discoveryUrl": "https://random-words.trycloudflare.com/.well-known/openid-configuration" },
   "client":  { "client_id": "conformance-client-1", "client_secret": "pulseauth-conformance-secret-1" },
   "client2": { "client_id": "conformance-client-2", "client_secret": "pulseauth-conformance-secret-2" },
+  "client_secret_post": { "client_id": "conformance-client-1", "client_secret": "pulseauth-conformance-secret-1" },
   "consent": {}
 }
 ```

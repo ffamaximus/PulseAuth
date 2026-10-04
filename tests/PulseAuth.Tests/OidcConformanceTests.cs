@@ -197,6 +197,41 @@ public class OidcConformanceTests
         Assert.Equal(HttpStatusCode.BadRequest, (await RefreshAsync(http, rotated.GetProperty("refresh_token").GetString()!)).StatusCode);
     }
 
+    [Fact]
+    public async Task AuthorizationCodeReuse_RevokesReferenceAccessTokens()
+    {
+        await using var host = await StartAsync();
+        using var http = host.CreateClient();
+        await LoginAsync(http);
+        var (verifier, challenge) = NewPkce();
+
+        var p = AuthorizeParams(challenge, scope: "openid profile");
+        p["client_id"] = ReferenceCodeClientId;
+        p["redirect_uri"] = ReferenceCodeRedirectUri;
+        var location = (await http.GetAsync(QueryHelpers.AddQueryString("/connect/authorize", p))).Headers.Location!.ToString();
+        var code = QueryHelpers.ParseQuery(location[location.IndexOf('?')..])["code"].ToString();
+
+        Task<HttpResponseMessage> Exchange() => PostFormAsync(http, "/connect/token", new()
+        {
+            ["grant_type"] = "authorization_code", ["client_id"] = ReferenceCodeClientId, ["code"] = code,
+            ["code_verifier"] = verifier, ["redirect_uri"] = ReferenceCodeRedirectUri,
+        });
+
+        var handle = (await ReadJsonAsync(await Exchange())).GetProperty("access_token").GetString()!;
+        Assert.DoesNotContain(".", handle);   // opaque reference token
+
+        HttpRequestMessage UserInfo()
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, "/connect/userinfo");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", handle);
+            return request;
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(UserInfo())).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Exchange()).StatusCode);              // replay
+        Assert.Equal(HttpStatusCode.Unauthorized, (await http.SendAsync(UserInfo())).StatusCode);
+    }
+
     // ── UserInfo endpoint ────────────────────────────────────────────────────
 
     [Fact]
@@ -240,6 +275,64 @@ public class OidcConformanceTests
         var invalid = await http.SendAsync(request);
         Assert.Equal(HttpStatusCode.Unauthorized, invalid.StatusCode);
         Assert.Contains("error=\"invalid_token\"", invalid.Headers.WwwAuthenticate.ToString());
+    }
+
+    [Fact]
+    public async Task UserInfo_ProfileScope_ReturnsStandardProfileClaims_UpdatedAtAsNumber()
+    {
+        await using var host = await StartAsync();
+        using var http = host.CreateClient();
+        var accessToken = (await host.CodeFlowAsync(http, scope: "openid profile")).GetProperty("access_token").GetString()!;
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "/connect/userinfo");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        var info = await ReadJsonAsync(await http.SendAsync(request));
+
+        Assert.Equal("es-CO", info.GetProperty("locale").GetString());
+        Assert.Equal("America/Bogota", info.GetProperty("zoneinfo").GetString());
+        Assert.Equal(System.Text.Json.JsonValueKind.Number, info.GetProperty("updated_at").ValueKind);
+        Assert.Equal(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).ToUnixTimeSeconds(), info.GetProperty("updated_at").GetInt64());
+        Assert.False(info.TryGetProperty("nickname", out _));   // unset claims are omitted
+    }
+
+    [Fact]
+    public async Task IdToken_ScopeClaims_CanBeLimitedToUserInfo()
+    {
+        foreach (var include in new[] { true, false })
+        {
+            await using var host = await StartAsync(o => o.IncludeScopeClaimsInIdToken = include);
+            using var http = host.CreateClient();
+            var tokens  = await host.CodeFlowAsync(http, scope: "openid profile");
+            var idToken = DecodeJwt(tokens.GetProperty("id_token").GetString()!).Payload;
+
+            Assert.Equal(include, idToken.TryGetProperty("name", out _));
+            Assert.True(idToken.TryGetProperty("role", out _));        // application claims always included
+
+            var request = new HttpRequestMessage(HttpMethod.Get, "/connect/userinfo");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.GetProperty("access_token").GetString()!);
+            Assert.Equal("Alice", (await ReadJsonAsync(await http.SendAsync(request))).GetProperty("name").GetString());
+        }
+    }
+
+    [Fact]
+    public async Task Acr_FromDefaultAcr_InIdToken_AndPublishedInDiscovery()
+    {
+        await using (var plain = await StartAsync())
+        {
+            using var http = plain.CreateClient();
+            var idToken = DecodeJwt((await plain.CodeFlowAsync(http)).GetProperty("id_token").GetString()!).Payload;
+            Assert.False(idToken.TryGetProperty("acr", out _));
+            Assert.False((await ReadJsonAsync(await http.GetAsync("/.well-known/openid-configuration")))
+                .TryGetProperty("acr_values_supported", out _));
+        }
+
+        await using var host = await StartAsync(o => { o.AcrValuesSupported = ["1", "2"]; o.DefaultAcr = "1"; });
+        using var client = host.CreateClient();
+        var token = DecodeJwt((await host.CodeFlowAsync(client)).GetProperty("id_token").GetString()!).Payload;
+        Assert.Equal("1", token.GetProperty("acr").GetString());
+
+        var doc = await ReadJsonAsync(await client.GetAsync("/.well-known/openid-configuration"));
+        Assert.Equal(["1", "2"], doc.GetProperty("acr_values_supported").EnumerateArray().Select(e => e.GetString()).ToArray());
     }
 
     // ── Discovery ────────────────────────────────────────────────────────────

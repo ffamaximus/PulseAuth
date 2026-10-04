@@ -16,6 +16,9 @@ public sealed class FakeUserService(BlockedUsers blocked, SecurityStamps stamps)
         SubjectId = UserId,
         Username  = UserId,
         Name      = "Alice",
+        Locale    = "es-CO",
+        ZoneInfo  = "America/Bogota",
+        UpdatedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
         AdditionalClaims =
         [
             new Claim("sub", "mallory"),     // must never override the real subject

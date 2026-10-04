@@ -34,6 +34,8 @@ public sealed class PulseAuthTestHost : IAsyncDisposable
     public const string ConsentRedirectUri  = "https://consent.example/cb";
     public const string ReferenceClientId     = "ref-app";
     public const string ReferenceClientSecret = "ref-secret";
+    public const string ReferenceCodeClientId    = "ref-spa";
+    public const string ReferenceCodeRedirectUri = "https://ref-spa.example/cb";
     public const string ApiClientId     = "orders-api";
     public const string ApiClientSecret = "api-secret";
 
@@ -119,6 +121,14 @@ public sealed class PulseAuthTestHost : IAsyncDisposable
                     AllowedGrantTypes = [GrantTypes.Password, GrantTypes.RefreshToken],
                     AllowedScopes = ["openid", "profile", "offline_access", "api"],
                     AllowOfflineAccess = true,
+                    AccessTokenType = AccessTokenType.Reference,
+                },
+                new Client
+                {
+                    ClientId = ReferenceCodeClientId, ClientName = ReferenceCodeClientId,
+                    AllowedGrantTypes = [GrantTypes.AuthorizationCode],
+                    RedirectUris = [ReferenceCodeRedirectUri],
+                    AllowedScopes = ["openid", "profile"],
                     AccessTokenType = AccessTokenType.Reference,
                 },
                 new Client
