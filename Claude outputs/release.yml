@@ -6,8 +6,8 @@ name: Release
 #   git tag v1.4.0
 #   git push origin v1.4.0
 #
-# Uses nuget.org Trusted Publishing (GitHub OIDC → short-lived API key): no long-lived NuGet API key
-# is stored in the repository. One-time setup is described in the README ("Publishing a release").
+# Authentication with nuget.org: the NUGET_API_KEY secret if present, otherwise nuget.org Trusted
+# Publishing (GitHub OIDC → short-lived key, no stored secret). See the `publish` job.
 
 on:
   push:
@@ -112,9 +112,26 @@ jobs:
     environment: nuget
     permissions:
       contents: write   # create the GitHub release
-      id-token: write   # nuget.org Trusted Publishing (OIDC)
+      id-token: write   # only needed for nuget.org Trusted Publishing (OIDC)
+    env:
+      # Two ways to authenticate with nuget.org — whichever is configured is used:
+      #  1. secret NUGET_API_KEY  → classic API key (nuget.org → API Keys, scope "Push").
+      #  2. secret NUGET_USER     → Trusted Publishing: no stored key; requires a policy on
+      #                             nuget.org (owner ffamaximus, repo PulseAuth,
+      #                             workflow release.yml, environment nuget).
+      # Secrets cannot be used in `if:` conditions, so they are exposed as env vars here.
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+      NUGET_USER: ${{ secrets.NUGET_USER }}
 
     steps:
+      - name: Check nuget.org credentials are configured
+        run: |
+          if [ -z "$NUGET_API_KEY" ] && [ -z "$NUGET_USER" ]; then
+            echo "::error::Configure the secret NUGET_API_KEY (API key) or NUGET_USER (Trusted Publishing) in the 'nuget' environment or the repository."
+            exit 1
+          fi
+          if [ -n "$NUGET_API_KEY" ]; then echo "Using the NUGET_API_KEY secret"; else echo "Using Trusted Publishing as $NUGET_USER"; fi
+
       - uses: actions/checkout@v5
 
       - uses: actions/download-artifact@v6
@@ -127,17 +144,20 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: NuGet login (OIDC → temporary API key)
+      - name: NuGet login (Trusted Publishing, OIDC → temporary API key)
         id: login
+        if: env.NUGET_API_KEY == ''
         uses: NuGet/login@v1
         with:
-          user: ${{ secrets.NUGET_USER }}   # nuget.org profile name (not the e-mail)
+          user: ${{ env.NUGET_USER }}   # nuget.org profile name (not the e-mail)
 
       - name: Push to nuget.org
         # .snupkg symbol packages next to each .nupkg are pushed automatically.
+        env:
+          PUSH_KEY: ${{ env.NUGET_API_KEY != '' && env.NUGET_API_KEY || steps.login.outputs.NUGET_API_KEY }}
         run: >
           dotnet nuget push "./artifacts/*.nupkg"
-          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
+          --api-key "$PUSH_KEY"
           --source https://api.nuget.org/v3/index.json
           --skip-duplicate
 
@@ -146,6 +166,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build-test-pack.outputs.version }}
         run: |
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            echo "Release v$VERSION already exists (re-run): uploading packages only"
+            gh release upload "v$VERSION" ./artifacts/*.nupkg --clobber
+            exit 0
+          fi
           # Section of CHANGELOG.md between "## <version>" and the next "## " heading
           awk -v v="$VERSION" '
             $0 ~ "^## " v "([^0-9.]|$)" { found = 1; next }
