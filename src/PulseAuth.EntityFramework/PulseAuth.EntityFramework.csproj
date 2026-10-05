@@ -9,11 +9,6 @@
     <PackageTags>oauth2;entityframework;efcore;aspnetcore;authentication</PackageTags>
   </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="[8.0.1,)" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[8.0.2,)" />
-  </ItemGroup>
-
   <!--
     EF Core is compiled against the major that matches each target framework.
     EF Core 10 moved ExecuteUpdate/ExecuteDelete (binary breaking change): a net10.0 build compiled
@@ -24,10 +19,15 @@
   <ItemGroup Condition="'$(TargetFramework)' != 'net10.0'">
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="[8.0.2,)" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="[8.0.2,)" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="[8.0.1,)" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[8.0.2,)" />
   </ItemGroup>
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="[10.0.0,)" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="[10.0.0,)" />
+    <!-- Must be >= the versions EF Core 10 depends on, otherwise NU1605 (package downgrade). -->
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="[10.0.0,)" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[10.0.0,)" />
   </ItemGroup>
 
   <!-- Design-time only: required by the dotnet-ef CLI tool to recognize the DbContext when
@@ -41,6 +41,11 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="[8.0.2,)" PrivateAssets="all"
                       Condition="'$(TargetFramework)' != 'net10.0'" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="[10.0.0,)" PrivateAssets="all"
+                      Condition="'$(TargetFramework)' == 'net10.0'" />
+    <!-- EF Core Design 10 (build-time only) pulls System.Security.Cryptography.Xml 9.0.0, which has
+         known high-severity advisories (e.g. CVE-2026-50648). Pin the patched version; PrivateAssets
+         keeps it out of the published package's dependencies. -->
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.12" PrivateAssets="all"
                       Condition="'$(TargetFramework)' == 'net10.0'" />
   </ItemGroup>
 
