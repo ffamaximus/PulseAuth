@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.4.1 — 2026-10-05
+
+Fix release for .NET 10 / EF Core 10. No database migration and no API changes compared to 1.4.0.
+
+### Fixes
+- **.NET 10 / EF Core 10**: the `net10.0` build of `PulseAuth.EntityFramework` is now compiled against
+  EF Core 10. In 1.4.0 it was built against EF Core 8 and failed at runtime with
+  `MissingMethodException: RelationalQueryableExtensions.ExecuteDeleteAsync` (token cleanup, code /
+  refresh token consumption) because EF Core 10 moved `ExecuteUpdate` / `ExecuteDelete`.
+  On `net10.0` the package therefore requires EF Core 10 (and an EF Core 10 database provider);
+  `net8.0` / `net9.0` keep working with EF Core 8 and 9.
+- `net10.0` dependencies aligned with EF Core 10 (`Microsoft.Extensions.Caching.Memory`,
+  `Microsoft.Extensions.DependencyInjection.Abstractions` ≥ 10.0.0) — fixes NU1605 package downgrades.
+- Build-time only: `System.Security.Cryptography.Xml` pinned to a patched version (pulled by
+  `Microsoft.EntityFrameworkCore.Design`, not a dependency of the published packages).
+
 ## 1.4.0 — 2026-10-04
 
 ### New features
@@ -73,13 +89,6 @@ dotnet ef database update --context <YourDbContext>
 - New abstractions: `IReferenceTokenStore`, `IConsentStore`, `IRevokedTokenStore`, `IConsentInteractionService`,
   `AccessTokenValidator`. `IUserAuthenticationService.GetSecurityStampAsync` has a default
   implementation (feature off for custom user services until implemented).
-
-### Fixes
-- **.NET 10 / EF Core 10**: the `net10.0` build of `PulseAuth.EntityFramework` is now compiled against
-  EF Core 10. Previously it was built against EF Core 8 and failed at runtime with
-  `MissingMethodException: RelationalQueryableExtensions.ExecuteDeleteAsync` (token cleanup, code /
-  refresh token consumption) because EF Core 10 moved `ExecuteUpdate` / `ExecuteDelete`.
-  On `net10.0` the package therefore requires EF Core 10 (and an EF Core 10 database provider).
 
 ## 1.3.0 — security release
 
