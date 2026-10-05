@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   build-test-pack:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to 26.04 from 2026-10-19
     env:
       DOTNET_NOLOGO: true
       DOTNET_CLI_TELEMETRY_OPTOUT: true
@@ -30,7 +30,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Read version from tag
         id: version
@@ -53,7 +53,7 @@ jobs:
             || { echo "::error::CHANGELOG.md has no '## ${{ steps.version.outputs.version }}' section"; exit 1; }
 
       - name: Setup .NET (8, 9, 10)
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
             8.0.x
@@ -90,7 +90,7 @@ jobs:
               || { echo "::error::Missing $p.${{ steps.version.outputs.version }}.nupkg"; exit 1; }
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: nuget-packages
           path: |
@@ -99,14 +99,14 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: test-results
           path: '**/TestResults/*.trx'
 
   publish:
     needs: build-test-pack
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to 26.04 from 2026-10-19
     # Optional: add required reviewers to this environment (Settings → Environments → nuget)
     # to approve every release manually before it reaches nuget.org.
     environment: nuget
@@ -115,15 +115,15 @@ jobs:
       id-token: write   # nuget.org Trusted Publishing (OIDC)
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           name: nuget-packages
           path: ./artifacts
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
