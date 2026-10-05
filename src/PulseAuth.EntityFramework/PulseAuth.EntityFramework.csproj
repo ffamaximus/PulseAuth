@@ -10,10 +10,24 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="[8.0.2,)" />
-    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="[8.0.2,)" />
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="[8.0.1,)" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[8.0.2,)" />
+  </ItemGroup>
+
+  <!--
+    EF Core is compiled against the major that matches each target framework.
+    EF Core 10 moved ExecuteUpdate/ExecuteDelete (binary breaking change): a net10.0 build compiled
+    against EF Core 8 fails at runtime with MissingMethodException
+    ('RelationalQueryableExtensions.ExecuteDeleteAsync') when the app uses EF Core 10.
+    net8.0 / net9.0 builds keep working with EF Core 8 and 9 (EF Core 10 requires net10.0).
+  -->
+  <ItemGroup Condition="'$(TargetFramework)' != 'net10.0'">
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="[8.0.2,)" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="[8.0.2,)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="[10.0.0,)" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="[10.0.0,)" />
   </ItemGroup>
 
   <!-- Design-time only: required by the dotnet-ef CLI tool to recognize the DbContext when
@@ -24,7 +38,10 @@
            \-\-startup-project src/YourApp
            \-\-context PulseAuthDbContext -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="[8.0.2,)" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="[8.0.2,)" PrivateAssets="all"
+                      Condition="'$(TargetFramework)' != 'net10.0'" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="[10.0.0,)" PrivateAssets="all"
+                      Condition="'$(TargetFramework)' == 'net10.0'" />
   </ItemGroup>
 
   <ItemGroup>

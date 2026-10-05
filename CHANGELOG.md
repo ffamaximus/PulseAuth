@@ -74,6 +74,13 @@ dotnet ef database update --context <YourDbContext>
   `AccessTokenValidator`. `IUserAuthenticationService.GetSecurityStampAsync` has a default
   implementation (feature off for custom user services until implemented).
 
+### Fixes
+- **.NET 10 / EF Core 10**: the `net10.0` build of `PulseAuth.EntityFramework` is now compiled against
+  EF Core 10. Previously it was built against EF Core 8 and failed at runtime with
+  `MissingMethodException: RelationalQueryableExtensions.ExecuteDeleteAsync` (token cleanup, code /
+  refresh token consumption) because EF Core 10 moved `ExecuteUpdate` / `ExecuteDelete`.
+  On `net10.0` the package therefore requires EF Core 10 (and an EF Core 10 database provider).
+
 ## 1.3.0 — security release
 
 This release fixes several security issues found in a review of 1.2.5. **Upgrading is strongly
