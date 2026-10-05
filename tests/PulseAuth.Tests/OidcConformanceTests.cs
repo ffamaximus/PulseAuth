@@ -421,7 +421,7 @@ public class OidcConformanceTests
         Assert.Equal("1", token.GetProperty("acr").GetString());
 
         var doc = await ReadJsonAsync(await client.GetAsync("/.well-known/openid-configuration"));
-        Assert.Equal(["1", "2"], doc.GetProperty("acr_values_supported").EnumerateArray().Select(e => e.GetString()).ToArray());
+        Assert.Equal(["1", "2"], doc.GetProperty("acr_values_supported").EnumerateArray().Select(e => e.GetString()!).ToArray());
     }
 
     [Fact]

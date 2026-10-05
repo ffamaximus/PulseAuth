@@ -65,9 +65,6 @@ public class DiscoveryDocument
     [JsonPropertyName("prompt_values_supported")]
     public IEnumerable<string> PromptValuesSupported { get; set; } = ["none", "login", "consent"];
 
-    /// <summary>
-    /// Response types supported by the authorization server. The default is "code", which means the Authorization Code flow is supported. If you want to support the Implicit flow (not recommended for new applications), you can include "id_token" and/or "token id_token" in this list and implement the necessary logic in your authorization endpoint to handle those response types.
-    /// </summary>
     /// <summary>Only the query response mode is supported.</summary>
     [JsonPropertyName("response_modes_supported")]
     public IEnumerable<string> ResponseModesSupported { get; set; } = ["query"];
@@ -92,6 +89,9 @@ public class DiscoveryDocument
     [JsonPropertyName("request_uri_parameter_supported")]
     public bool RequestUriParameterSupported { get; set; }
 
+    /// <summary>
+    /// Response types supported by the authorization server. The default is "code", which means the Authorization Code flow is supported. If you want to support the Implicit flow (not recommended for new applications), you can include "id_token" and/or "token id_token" in this list and implement the necessary logic in your authorization endpoint to handle those response types.
+    /// </summary>
     [JsonPropertyName("response_types_supported")]
     public IEnumerable<string> ResponseTypesSupported { get; set; } = ["code"];
 

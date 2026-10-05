@@ -12,16 +12,16 @@ permissions:
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to 26.04 from 2026-10-19
     env:
       DOTNET_NOLOGO: true
       DOTNET_CLI_TELEMETRY_OPTOUT: true
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup .NET (8, 9, 10)
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
             8.0.x
@@ -38,20 +38,24 @@ jobs:
         run: dotnet test PulseAuth.sln --configuration Release --no-build --logger trx
 
       - name: Vulnerable package check
-        run: dotnet list PulseAuth.sln package --vulnerable --include-transitive
+        run: |
+          dotnet list PulseAuth.sln package --vulnerable --include-transitive | tee vulnerable.txt
+          if grep -q "has the following vulnerable packages" vulnerable.txt; then
+            echo "::error::Vulnerable packages found"; exit 1
+          fi
 
       - name: Pack
         run: dotnet pack PulseAuth.sln --configuration Release --no-build --output ./artifacts
 
       - name: Upload packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: nuget-packages
           path: ./artifacts/*.nupkg
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: test-results
           path: '**/TestResults/*.trx'

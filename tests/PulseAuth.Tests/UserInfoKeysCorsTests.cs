@@ -89,7 +89,6 @@ public class UserInfoKeysCorsTests
 
         Assert.Equal(discovery.GetProperty("issuer").GetString(), payload.GetProperty("iss").GetString());
         var methods = discovery.GetProperty("code_challenge_methods_supported").EnumerateArray().Select(e => e.GetString()).ToList();
-        Assert.Equal(1, methods.Count);
-        Assert.Equal("S256", methods[0]);
+        Assert.Equal("S256", Assert.Single(methods));
     }
 }

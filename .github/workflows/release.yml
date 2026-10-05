@@ -1,0 +1,158 @@
+name: Release
+
+# Publishes PulseAuth, PulseAuth.EntityFramework and PulseAuth.Identity to nuget.org when a
+# version tag is pushed:
+#
+#   git tag v1.4.0
+#   git push origin v1.4.0
+#
+# Uses nuget.org Trusted Publishing (GitHub OIDC → short-lived API key): no long-lived NuGet API key
+# is stored in the repository. One-time setup is described in the README ("Publishing a release").
+
+on:
+  push:
+    tags: [ 'v*.*.*' ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-test-pack:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing $VERSION"
+
+      - name: Tag must match <Version> in Directory.Build.props
+        run: |
+          PROPS_VERSION=$(grep -oPm1 '(?<=<Version>)[0-9][^<]*(?=</Version>)' Directory.Build.props)
+          if [ "$PROPS_VERSION" != "${{ steps.version.outputs.version }}" ]; then
+            echo "::error::Tag v${{ steps.version.outputs.version }} does not match <Version>$PROPS_VERSION</Version> in Directory.Build.props"
+            exit 1
+          fi
+
+      - name: CHANGELOG must have a section for this version
+        run: |
+          grep -q "^## ${{ steps.version.outputs.version }}\b" CHANGELOG.md \
+            || { echo "::error::CHANGELOG.md has no '## ${{ steps.version.outputs.version }}' section"; exit 1; }
+
+      - name: Setup .NET (8, 9, 10)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Restore
+        run: dotnet restore PulseAuth.sln
+
+      - name: Build
+        run: dotnet build PulseAuth.sln --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
+
+      - name: Test
+        run: dotnet test PulseAuth.sln --configuration Release --no-build --logger trx
+
+      - name: Vulnerable package check
+        run: |
+          dotnet list PulseAuth.sln package --vulnerable --include-transitive | tee vulnerable.txt
+          if grep -q "has the following vulnerable packages" vulnerable.txt; then
+            echo "::error::Vulnerable packages found"; exit 1
+          fi
+
+      - name: Pack (with symbols)
+        run: >
+          dotnet pack PulseAuth.sln --configuration Release --no-build --output ./artifacts
+          -p:ContinuousIntegrationBuild=true
+          -p:IncludeSymbols=true -p:SymbolPackageFormat=snupkg
+
+      - name: Check the three packages were produced
+        run: |
+          ls -l ./artifacts
+          for p in PulseAuth PulseAuth.EntityFramework PulseAuth.Identity; do
+            test -f "./artifacts/$p.${{ steps.version.outputs.version }}.nupkg" \
+              || { echo "::error::Missing $p.${{ steps.version.outputs.version }}.nupkg"; exit 1; }
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: |
+            ./artifacts/*.nupkg
+            ./artifacts/*.snupkg
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: '**/TestResults/*.trx'
+
+  publish:
+    needs: build-test-pack
+    runs-on: ubuntu-latest
+    # Optional: add required reviewers to this environment (Settings → Environments → nuget)
+    # to approve every release manually before it reaches nuget.org.
+    environment: nuget
+    permissions:
+      contents: write   # create the GitHub release
+      id-token: write   # nuget.org Trusted Publishing (OIDC)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: nuget-packages
+          path: ./artifacts
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: NuGet login (OIDC → temporary API key)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}   # nuget.org profile name (not the e-mail)
+
+      - name: Push to nuget.org
+        # .snupkg symbol packages next to each .nupkg are pushed automatically.
+        run: >
+          dotnet nuget push "./artifacts/*.nupkg"
+          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      - name: GitHub release with the CHANGELOG notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build-test-pack.outputs.version }}
+        run: |
+          # Section of CHANGELOG.md between "## <version>" and the next "## " heading
+          awk -v v="$VERSION" '
+            $0 ~ "^## " v "([^0-9.]|$)" { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          PRERELEASE=""
+          case "$VERSION" in *-*) PRERELEASE="--prerelease" ;; esac
+          gh release create "v$VERSION" ./artifacts/*.nupkg \
+            --title "PulseAuth $VERSION" --notes-file release-notes.md $PRERELEASE
