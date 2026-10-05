@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using PulseAuth.Tests.Infrastructure;
 using static PulseAuth.Tests.Infrastructure.PulseAuthTestHost;
@@ -118,7 +119,7 @@ public class OidcConformanceTests
             await LoginAsync(http);
 
             var unknown = RedirectQuery(await http.GetAsync(QueryHelpers.AddQueryString("/connect/authorize",
-                AuthorizeParams(NewPkce().Challenge, scope: "openid profile address"))));
+                AuthorizeParams(NewPkce().Challenge, scope: "openid profile unknown_scope"))));
             Assert.Equal(ignore, unknown.ContainsKey("code"));
             if (!ignore)
                 Assert.Equal("invalid_scope", unknown["error"]);
@@ -161,7 +162,7 @@ public class OidcConformanceTests
     }
 
     [Fact]
-    public async Task AuthorizationCodeReuse_IsRejected_AndRevokesTheIssuedRefreshToken()
+    public async Task AuthorizationCodeReuse_IsRejected_AndRevokesTheIssuedTokens()
     {
         await using var host = await StartAsync();
         using var http = host.CreateClient();
@@ -171,13 +172,101 @@ public class OidcConformanceTests
         var code  = RedirectQuery(await http.GetAsync(QueryHelpers.AddQueryString("/connect/authorize", AuthorizeParams(challenge))))["code"];
         var first = await ReadJsonAsync(await ExchangeAsync(http, code, verifier));
         var refreshToken = first.GetProperty("refresh_token").GetString()!;
+        var accessToken  = first.GetProperty("access_token").GetString()!;
+        Assert.Equal(HttpStatusCode.OK, (await UserInfoStatusAsync(http, accessToken)));
 
         var replay = await ExchangeAsync(http, code, verifier);
         Assert.Equal(HttpStatusCode.BadRequest, replay.StatusCode);
         Assert.Equal("invalid_grant", (await ReadJsonAsync(replay)).GetProperty("error").GetString());
 
-        // The refresh token obtained with the replayed code no longer works.
+        // The refresh token and the (JWT) access token obtained with the replayed code no longer work.
         Assert.Equal(HttpStatusCode.BadRequest, (await RefreshAsync(http, refreshToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await UserInfoStatusAsync(http, accessToken)));
+    }
+
+    private static async Task<HttpStatusCode> UserInfoStatusAsync(HttpClient http, string accessToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, "/connect/userinfo");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        return (await http.SendAsync(request)).StatusCode;
+    }
+
+    [Fact]
+    public async Task JwtAccessToken_CanBeRevoked_OnlyByItsClient()
+    {
+        await using var host = await StartAsync();
+        using var http = host.CreateClient();
+        var accessToken = (await host.CodeFlowAsync(http)).GetProperty("access_token").GetString()!;
+
+        // Another client cannot revoke it (still 200, RFC 7009 §2.2, but the token keeps working)
+        Assert.Equal(HttpStatusCode.OK, (await PostFormAsync(http, "/connect/revocation",
+            new() { ["token"] = accessToken, ["client_id"] = ConsentClientId })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, await UserInfoStatusAsync(http, accessToken));
+
+        Assert.Equal(HttpStatusCode.OK, (await PostFormAsync(http, "/connect/revocation",
+            new() { ["token"] = accessToken, ["client_id"] = SpaClientId, ["token_type_hint"] = "access_token" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, await UserInfoStatusAsync(http, accessToken));
+
+        var introspection = await ReadJsonAsync(await PostFormAsync(http, "/connect/introspect", new()
+        {
+            ["token"] = accessToken, ["client_id"] = ApiClientId, ["client_secret"] = ApiClientSecret,
+        }));
+        Assert.False(introspection.GetProperty("active").GetBoolean());
+    }
+
+    // ── Request objects ──────────────────────────────────────────────────────
+
+    private static string UnsignedRequestObject(object payload, string alg = "none")
+        => Base64Url(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { alg })))
+           + "." + Base64Url(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload))) + ".";
+
+    [Fact]
+    public async Task UnsignedRequestObject_WhenEnabled_ParametersSupersedeTheQuery()
+    {
+        await using var host = await StartAsync(o => o.AllowUnsignedRequestObjects = true);
+        using var http = host.CreateClient();
+        await LoginAsync(http);
+        var (verifier, challenge) = NewPkce();
+
+        var doc = await ReadJsonAsync(await http.GetAsync("/.well-known/openid-configuration"));
+        Assert.True(doc.GetProperty("request_parameter_supported").GetBoolean());
+        Assert.Equal("none", doc.GetProperty("request_object_signing_alg_values_supported")[0].GetString());
+
+        // redirect_uri, state, nonce and PKCE only in the request object; the query redirect_uri is ignored.
+        var p = new Dictionary<string, string?>
+        {
+            ["client_id"] = SpaClientId, ["response_type"] = "code", ["scope"] = "openid",
+            ["redirect_uri"] = "https://evil.example/cb",
+            ["request"] = UnsignedRequestObject(new
+            {
+                client_id = SpaClientId, response_type = "code", scope = "openid profile",
+                redirect_uri = SpaRedirectUri, state = "from-object", nonce = "n-object",
+                code_challenge = challenge, code_challenge_method = "S256", max_age = 3600,
+            }),
+        };
+        var query = RedirectQuery(await http.GetAsync(QueryHelpers.AddQueryString("/connect/authorize", p)));
+        Assert.Equal("from-object", query["state"]);
+
+        var tokens  = await ReadJsonAsync(await ExchangeAsync(http, query["code"], verifier));
+        var idToken = DecodeJwt(tokens.GetProperty("id_token").GetString()!).Payload;
+        Assert.Equal("n-object", idToken.GetProperty("nonce").GetString());
+        Assert.Contains("profile", tokens.GetProperty("scope").GetString());
+    }
+
+    [Theory]
+    [InlineData("RS256", "spa")]          // signed objects are not supported
+    [InlineData("none", "consent-app")]   // client_id must match the query
+    public async Task UnsignedRequestObject_Invalid_IsInvalidRequestObject(string alg, string objectClientId)
+    {
+        await using var host = await StartAsync(o => o.AllowUnsignedRequestObjects = true);
+        using var http = host.CreateClient();
+        await LoginAsync(http);
+
+        var p = AuthorizeParams(NewPkce().Challenge);
+        p["request"] = UnsignedRequestObject(new { client_id = objectClientId, response_type = "code" }, alg);
+        var query = RedirectQuery(await http.GetAsync(QueryHelpers.AddQueryString("/connect/authorize", p)));
+        Assert.Equal("invalid_request_object", query["error"]);
+        Assert.False(query.ContainsKey("code"));
     }
 
     [Fact]
@@ -335,6 +424,95 @@ public class OidcConformanceTests
         Assert.Equal(["1", "2"], doc.GetProperty("acr_values_supported").EnumerateArray().Select(e => e.GetString()).ToArray());
     }
 
+    [Fact]
+    public async Task AddressScope_ReturnsAddressObject_InUserInfo_AndIdTokenWhenConfigured()
+    {
+        await using var host = await StartAsync();
+        using var http = host.CreateClient();
+        var tokens = await host.CodeFlowAsync(http, scope: "openid address");
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "/connect/userinfo");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.GetProperty("access_token").GetString()!);
+        var address = (await ReadJsonAsync(await http.SendAsync(request))).GetProperty("address");
+        Assert.Equal(System.Text.Json.JsonValueKind.Object, address.ValueKind);
+        Assert.Equal("Bogotá", address.GetProperty("locality").GetString());
+        Assert.Equal("CO", address.GetProperty("country").GetString());
+        Assert.False(address.TryGetProperty("postal_code", out _));   // unset members are omitted
+
+        // IncludeScopeClaimsInIdToken (default true): also in the ID token, as a JSON object
+        var idAddress = DecodeJwt(tokens.GetProperty("id_token").GetString()!).Payload.GetProperty("address");
+        Assert.Equal(System.Text.Json.JsonValueKind.Object, idAddress.ValueKind);
+        Assert.Equal("CO", idAddress.GetProperty("country").GetString());
+
+        // without the scope, no address
+        using var other = host.CreateClient();
+        var plain = await host.CodeFlowAsync(other, scope: "openid profile");
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "/connect/userinfo");
+        request2.Headers.Authorization = new AuthenticationHeaderValue("Bearer", plain.GetProperty("access_token").GetString()!);
+        Assert.False((await ReadJsonAsync(await other.SendAsync(request2))).TryGetProperty("address", out _));
+    }
+
+    private static async Task<JsonElement> UserInfoAsync(HttpClient http, string accessToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, "/connect/userinfo");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        var response = await http.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return await ReadJsonAsync(response);
+    }
+
+    [Fact]
+    public async Task ClaimsParameter_ReleasesRequestedClaims_OnlyForAllowedScopes_AndSurvivesRefresh()
+    {
+        await using var host = await StartAsync(o => o.IncludeScopeClaimsInIdToken = false);
+        using var http = host.CreateClient();
+        await LoginAsync(http);
+        var (verifier, challenge) = NewPkce();
+
+        // scope = openid only; "name" (profile) and "address" are allowed for the client, "email" is not.
+        var p = AuthorizeParams(challenge, scope: "openid offline_access");
+        p["claims"] = """{"userinfo":{"name":{"essential":true},"email":null},"id_token":{"address":null,"locale":null}}""";
+        var code = RedirectQuery(await http.GetAsync(QueryHelpers.AddQueryString("/connect/authorize", p)))["code"];
+        var tokens = await ReadJsonAsync(await ExchangeAsync(http, code, verifier));
+
+        var info = await UserInfoAsync(http, tokens.GetProperty("access_token").GetString()!);
+        Assert.Equal("Alice", info.GetProperty("name").GetString());
+        Assert.False(info.TryGetProperty("email", out _));          // client may not use the email scope
+        Assert.False(info.TryGetProperty("locale", out _));         // only requested for the ID token
+
+        var idToken = DecodeJwt(tokens.GetProperty("id_token").GetString()!).Payload;
+        Assert.Equal("CO", idToken.GetProperty("address").GetProperty("country").GetString());
+        Assert.Equal("es-CO", idToken.GetProperty("locale").GetString());
+        Assert.False(idToken.TryGetProperty("name", out _));
+
+        // After a refresh the request still applies
+        var refreshed = await ReadJsonAsync(await RefreshAsync(http, tokens.GetProperty("refresh_token").GetString()!));
+        Assert.Equal("Alice", (await UserInfoAsync(http, refreshed.GetProperty("access_token").GetString()!)).GetProperty("name").GetString());
+        Assert.Equal("es-CO", DecodeJwt(refreshed.GetProperty("id_token").GetString()!).Payload.GetProperty("locale").GetString());
+    }
+
+    [Fact]
+    public async Task ClaimsParameter_InvalidJson_IsInvalidRequest()
+    {
+        await using var host = await StartAsync();
+        using var http = host.CreateClient();
+        await LoginAsync(http);
+
+        var p = AuthorizeParams(NewPkce().Challenge);
+        p["claims"] = "[not json";
+        var query = RedirectQuery(await http.GetAsync(QueryHelpers.AddQueryString("/connect/authorize", p)));
+        Assert.Equal("invalid_request", query["error"]);
+    }
+
+    [Fact]
+    public async Task UserClaims_CannotForgeTheUserInfoClaimsList()
+    {
+        // "userinfo_claims" is reserved: a user/admin-editable claim can never extend what UserInfo releases.
+        Assert.Contains(PulseAuth.Services.DefaultTokenService.UserInfoClaimsClaimType,
+                        PulseAuth.Services.DefaultTokenService.ReservedClaimTypes);
+        await Task.CompletedTask;
+    }
+
     // ── Discovery ────────────────────────────────────────────────────────────
 
     [Fact]
@@ -347,7 +525,7 @@ public class OidcConformanceTests
 
         Assert.False(doc.GetProperty("request_parameter_supported").GetBoolean());
         Assert.False(doc.GetProperty("request_uri_parameter_supported").GetBoolean());   // defaults to true if omitted
-        Assert.False(doc.GetProperty("claims_parameter_supported").GetBoolean());
+        Assert.True(doc.GetProperty("claims_parameter_supported").GetBoolean());
         Assert.Equal("query", doc.GetProperty("response_modes_supported")[0].GetString());
         Assert.Contains("auth_time", doc.GetProperty("claims_supported").EnumerateArray().Select(e => e.GetString()));
     }

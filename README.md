@@ -277,9 +277,9 @@ dotnet ef database update --context <YourDbContext>
 
 | Change | Type |
 |---|---|
-| `PulseAuth_ReferenceTokens`, `PulseAuth_Consents` | new tables |
-| `PulseAuth_RefreshTokens.UserStamp`, `.AuthTime` | new nullable columns |
-| `PulseAuth_AuthorizationCodes.AuthTime`, `.Acr` | new nullable columns |
+| `PulseAuth_ReferenceTokens`, `PulseAuth_Consents`, `PulseAuth_RevokedTokens` | new tables |
+| `PulseAuth_RefreshTokens.UserStamp`, `.AuthTime`, `.ClaimsRequest` | new nullable columns |
+| `PulseAuth_AuthorizationCodes.AuthTime`, `.Acr`, `.ClaimsRequest` | new nullable columns |
 | `PulseAuth_Clients.AccessTokenType`, `.AllowIntrospection` | new columns with defaults (`Jwt`, `false`) |
 
 Review the generated migration: it must only **add** tables/columns. If it drops or renames
@@ -621,7 +621,9 @@ POST protected by antiforgery and then does `LocalRedirect(returnUrl)` to finish
 
 **Revocation.** `/connect/revocation` requires the client to identify itself (`client_id`, plus
 `client_secret` for confidential clients) and only revokes tokens issued to that client
-(RFC 7009). JWT access tokens cannot be revoked — keep their lifetime short.
+(RFC 7009). Revoked JWT access tokens are rejected by PulseAuth's UserInfo and introspection
+endpoints until they expire; APIs that validate JWTs locally do not know about it — keep their
+lifetime short, or use reference tokens.
 
 **Consent.** See [Consent page](#consent-page-third-party-clients).
 
@@ -748,7 +750,7 @@ limits how long a remembered consent lasts (default: until revoked).
 
 ## Reference tokens and introspection
 
-JWT access tokens cannot be revoked before they expire. For clients that need revocable tokens set
+APIs that validate JWT access tokens locally cannot know that a token was revoked. For clients that need revocable tokens set
 `AccessTokenType = AccessTokenType.Reference`: the client receives an opaque handle and APIs validate
 it with the introspection endpoint (`/connect/introspect`, RFC 7662). Reference tokens are revoked by
 `/connect/revocation`, logout, consent revocation, blocked users and password changes.
@@ -798,6 +800,9 @@ builder.Services.AddPulseAuth(opts =>
 
     // Unknown scopes are ignored instead of failing with invalid_scope (OIDC Core §3.1.2.1).
     opts.IgnoreUnknownScopes = true;
+
+    // Accept unsigned request objects (request=<JWT with alg "none">, OIDC Core §6.1). Off by default.
+    opts.AllowUnsignedRequestObjects = true;
 });
 ```
 
@@ -808,7 +813,13 @@ await HttpContext.SignInAsync(new ClaimsPrincipal(new ClaimsIdentity(claims, "pw
 ```
 
 `UserInfo` also carries the remaining standard profile claims (`MiddleName`, `Nickname`,
-`ProfileUrl`, `Website`, `Gender`, `Birthdate`, `ZoneInfo`, `Locale`, `UpdatedAt`).
+`ProfileUrl`, `Website`, `Gender`, `Birthdate`, `ZoneInfo`, `Locale`, `UpdatedAt`) and the postal
+`Address` (returned for the `address` scope — add `"address"` to `SupportedScopes` and the client's
+`AllowedScopes`).
+
+Clients can also request individual standard claims with the OIDC `claims` parameter, e.g.
+`claims={"userinfo":{"name":{"essential":true}},"id_token":{"email":null}}`. A claim is only released
+when the client may use the scope it belongs to (`profile`, `email`, `address`, `phone`).
 
 PulseAuth 1.4.0 passes the OpenID Foundation **Basic OP** conformance plan
 (`oidcc-basic-certification-test-plan`) with no failures. To run the suite yourself see

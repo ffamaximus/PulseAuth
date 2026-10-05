@@ -85,6 +85,10 @@ public class AuthorizationCodeEntity : PersistedGrantEntity
     /// <summary>Authentication context class achieved by the sign-in (1.4.0+); ID token <c>acr</c>.</summary>
     [MaxLength(200)]
     public string? Acr { get; set; }
+
+    /// <summary>Claims requested with the OIDC <c>claims</c> parameter (1.4.0+), serialized.</summary>
+    [MaxLength(2000)]
+    public string? ClaimsRequest { get; set; }
 }
 
 /// <summary>
@@ -108,6 +112,10 @@ public class RefreshTokenEntity : PersistedGrantEntity
 
     /// <summary>When the user originally authenticated (1.4.0+); used for the ID token auth_time.</summary>
     public DateTime? AuthTime { get; set; }
+
+    /// <summary>Claims requested with the OIDC <c>claims</c> parameter (1.4.0+), serialized.</summary>
+    [MaxLength(2000)]
+    public string? ClaimsRequest { get; set; }
 }
 
 /// <summary>
@@ -166,4 +174,22 @@ public class ConsentEntity
 
     /// <summary>False = one-time consent.</summary>
     public bool Remember { get; set; } = true;
+}
+
+/// <summary>
+/// A revoked JWT access token (1.4.0+): its <c>jti</c> and the token's own expiry, after which the
+/// entry is removed. Consulted by the UserInfo and introspection endpoints.
+/// </summary>
+[Table("PulseAuth_RevokedTokens")]
+public class RevokedTokenEntity
+{
+    /// <summary>The <c>jti</c> of the revoked access token.</summary>
+    [Key, MaxLength(200)]
+    public string Key { get; set; } = default!;
+
+    /// <summary>When the revocation was recorded.</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Expiry of the revoked token; the entry is useless (and cleaned up) afterwards.</summary>
+    public DateTime ExpiresAt { get; set; }
 }

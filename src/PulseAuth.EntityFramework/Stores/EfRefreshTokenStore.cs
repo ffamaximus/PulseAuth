@@ -48,6 +48,7 @@ public class EfRefreshTokenStore : IRefreshTokenStore
             PreviousTokenId = token.PreviousTokenId,
             UserStamp       = token.UserStamp,
             AuthTime        = token.AuthTime,
+            ClaimsRequest   = token.ClaimsRequest,
         });
         await _db.SaveChangesAsync(ct);
     }
@@ -79,6 +80,7 @@ public class EfRefreshTokenStore : IRefreshTokenStore
             PreviousTokenId = e.PreviousTokenId,
             UserStamp       = e.UserStamp,
             AuthTime        = e.AuthTime,
+            ClaimsRequest   = e.ClaimsRequest,
         };
     }
 

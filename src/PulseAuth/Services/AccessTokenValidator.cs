@@ -33,13 +33,16 @@ public class AccessTokenValidator
     private readonly PulseAuthOptions      _options;
     private readonly IKeyMaterialService   _keys;
     private readonly IReferenceTokenStore? _referenceTokens;
+    private readonly IRevokedTokenStore?   _revokedTokens;
 
     /// <summary>Initializes a new instance of the <see cref="AccessTokenValidator"/> class.</summary>
     public AccessTokenValidator(
         IOptions<PulseAuthOptions> options,
         IKeyMaterialService keys,
-        IReferenceTokenStore? referenceTokens = null)
+        IReferenceTokenStore? referenceTokens = null,
+        IRevokedTokenStore? revokedTokens = null)
     {
+        _revokedTokens   = revokedTokens;
         _options         = options.Value;
         _keys            = keys;
         _referenceTokens = referenceTokens;
@@ -83,6 +86,11 @@ public class AccessTokenValidator
 
             if (validated is not JwtSecurityToken jwt || !IsAccessToken(jwt))
                 return AccessTokenValidationResult.Invalid("An access token is required");
+
+            // Revoked JWTs (revocation endpoint, authorization code replay) — RFC 7009 / RFC 6749 §4.1.2.
+            if (_revokedTokens is not null && !string.IsNullOrEmpty(jwt.Id) &&
+                await _revokedTokens.IsRevokedAsync(jwt.Id, ct))
+                return AccessTokenValidationResult.Invalid("The access token has been revoked");
 
             return new AccessTokenValidationResult(true, jwt, principal, isReference);
         }

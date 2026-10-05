@@ -59,10 +59,16 @@ public class DefaultTokenService : ITokenService
         var now         = DateTime.UtcNow;
         var scopeList   = scopes.ToList();
 
+        // The caller may fix the jti (the token endpoint does for code exchanges, so a replayed code
+        // can revoke the token); otherwise a random one is used.
+        var extra = additionalClaims?.ToList();
+        var jti   = extra?.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Jti)?.Value ?? Guid.NewGuid().ToString();
+        extra?.RemoveAll(c => c.Type == JwtRegisteredClaimNames.Jti);
+
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub,       subjectId),
-            new(JwtRegisteredClaimNames.Jti,       Guid.NewGuid().ToString()),
+            new(JwtRegisteredClaimNames.Jti,       jti),
             new(JwtRegisteredClaimNames.Iat,       EpochTime.GetIntDate(now).ToString(), ClaimValueTypes.Integer64),
             new("client_id",                       clientId),
             new("scope",                           string.Join(" ", scopeList)),
@@ -75,8 +81,8 @@ public class DefaultTokenService : ITokenService
         if (user?.AdditionalClaims is { Count: > 0 })
             claims.AddRange(WithoutReservedClaims(user.AdditionalClaims));
 
-        if (additionalClaims is not null)
-            claims.AddRange(additionalClaims);
+        if (extra is not null)
+            claims.AddRange(extra);
 
         var token = new JwtSecurityToken(
             issuer:             _options.Issuer,
@@ -147,6 +153,29 @@ public class DefaultTokenService : ITokenService
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
+    /// <summary>
+    /// Access token claim listing the standard claims requested for UserInfo with the OIDC
+    /// <c>claims</c> parameter (space separated). Reserved: user claims can never set it.
+    /// </summary>
+    public const string UserInfoClaimsClaimType = "userinfo_claims";
+
+    /// <summary>The claim types <see cref="AddScopeClaims"/> puts in the ID token for these scopes.</summary>
+    public static IReadOnlySet<string> ScopeClaimTypesInIdToken(IEnumerable<string> scopes)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var scope in scopes)
+        {
+            switch (scope)
+            {
+                case StandardScopes.Profile: set.UnionWith(["name", "given_name", "family_name", "picture", "preferred_username"]); break;
+                case StandardScopes.Email:   set.UnionWith(["email", "email_verified"]); break;
+                case StandardScopes.Phone:   set.UnionWith(["phone_number", "phone_number_verified"]); break;
+                case StandardScopes.Address: set.Add("address"); break;
+            }
+        }
+        return set;
+    }
+
     /// <summary>Standard claims of the profile / email / phone scopes (OIDC Core §5.4).</summary>
     private static void AddScopeClaims(List<Claim> claims, Models.UserInfo user, List<string> scopeList)
     {
@@ -168,6 +197,11 @@ public class DefaultTokenService : ITokenService
             AddIfNotNull(claims, "phone_number",          user.PhoneNumber);
             claims.Add(new("phone_number_verified", user.PhoneNumberVerified.ToString().ToLower(), ClaimValueTypes.Boolean));
         }
+        if (scopeList.Contains(StandardScopes.Address) && user.Address?.ToClaimObject() is { Count: > 0 } address)
+        {
+            // JSON claim value type → serialized as a nested object in the JWT
+            claims.Add(new("address", System.Text.Json.JsonSerializer.Serialize(address), JsonClaimValueTypes.Json));
+        }
     }
 
     /// <summary>JOSE "typ" header value for JWT access tokens (RFC 9068).</summary>
@@ -181,7 +215,7 @@ public class DefaultTokenService : ITokenService
     public static readonly IReadOnlySet<string> ReservedClaimTypes = new HashSet<string>(StringComparer.Ordinal)
     {
         "sub", "iss", "aud", "exp", "nbf", "iat", "jti", "client_id", "scope", "nonce",
-        "auth_time", "azp", "at_hash", "c_hash", "sid", "cnf", "typ", "acr",
+        "auth_time", "azp", "at_hash", "c_hash", "sid", "cnf", "typ", "acr", UserInfoClaimsClaimType,
         ClaimTypes.NameIdentifier,
     };
 

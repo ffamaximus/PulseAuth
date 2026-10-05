@@ -16,7 +16,7 @@ Ejecutar la suite es **gratis**. Solo la *certificación* (publicar los resultad
 | | |
 |---|---|
 | Clientes | `conformance-client-1` y `conformance-client-2` (confidenciales, `client_secret_basic` / `client_secret_post`) |
-| Scopes | `openid profile email phone offline_access` (scopes desconocidos como `address` se ignoran) |
+| Scopes | `openid profile email address phone offline_access` (scopes desconocidos se ignoran) |
 | Usuario | `conformance-user`, con todos los claims estándar (nombre, email verificado, teléfono…) |
 | Login | `/Account/Login` — con `AutoLogin=true` inicia sesión sin pedir nada (cada visita crea una sesión nueva, así `prompt=login` y `max_age` funcionan) |
 | Logout | `/Account/Logout` — borra la sesión (necesario antes de `oidcc-prompt-none-not-logged-in`) |
@@ -113,10 +113,10 @@ En ese caso:
 |---|---|
 | `oidcc-prompt-none-not-logged-in` | Visita antes `/Account/Logout` (o usa una ventana de incógnito). Esperado: `login_required`. |
 | `oidcc-ensure-registered-redirect-uri`, `oidcc-ensure-redirect-uri-in-authorization-request` | PulseAuth muestra un error **sin redirigir** (correcto). La suite pide **subir una captura** de esa página: estado *REVIEW*. |
-| `oidcc-codereuse-30seconds` | El código reutilizado se rechaza y los refresh tokens emitidos con él se revocan. El *access token* JWT ya emitido sigue siendo válido hasta que expira: probable **WARNING** (no es fallo). |
-| `oidcc-claims-essential` | El parámetro `claims` no está soportado (`claims_parameter_supported=false`): se ignora, posible **WARNING**. |
-| `oidcc-unsigned-request-object-…`, `oidcc-request-uri-…` | Se rechazan con `request_not_supported` / `request_uri_not_supported`: aceptado por la suite. |
-| `oidcc-scope-address` | `address` no se publica en `scopes_supported`: la prueba se omite (*SKIPPED*). |
+| `oidcc-codereuse-30seconds` | El código reutilizado se rechaza y se revocan el access token (JWT) y los refresh tokens emitidos con él. |
+| `oidcc-claims-essential` | Soportado (`claims_parameter_supported=true`): UserInfo devuelve `name` aunque el scope sea solo `openid`. |
+| `oidcc-unsigned-request-object-…`, `oidcc-ensure-request-object-with-redirect-uri` | Request objects sin firmar aceptados (`AllowUnsignedRequestObjects`); sus parámetros (incluido `redirect_uri`) prevalecen sobre la query. `request_uri` sigue sin soporte. |
+| `oidcc-scope-address`, `oidcc-scope-all` | Soportados: UserInfo devuelve `address` como objeto JSON. |
 | `oidcc-display-*`, `oidcc-ui-locales`, `oidcc-login-hint`… | Parámetros opcionales que se ignoran: deberían pasar (algunos piden captura). |
 
 Estados de la suite: **PASSED** / **WARNING** (aceptable, conviene revisar) / **REVIEW** (requiere

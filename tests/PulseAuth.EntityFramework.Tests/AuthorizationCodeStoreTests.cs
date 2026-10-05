@@ -127,11 +127,13 @@ public class AuthorizationCodeStoreTests
         var code     = NewCode("with-auth-time");
         code.AuthTime = authTime;
         code.Acr      = "urn:test:mfa";
+        code.ClaimsRequest = """{"u":["name"],"i":[]}""";
         await store.StoreAsync(code);
         await store.StoreAsync(NewCode("without-auth-time"));
 
         Assert.Equal(authTime, (await store.FindByCodeAsync("with-auth-time"))!.AuthTime);
         Assert.Equal("urn:test:mfa", (await store.FindByCodeAsync("with-auth-time"))!.Acr);
+        Assert.Equal("""{"u":["name"],"i":[]}""", (await store.FindByCodeAsync("with-auth-time"))!.ClaimsRequest);
         Assert.Null((await store.FindByCodeAsync("without-auth-time"))!.AuthTime);
     }
 }

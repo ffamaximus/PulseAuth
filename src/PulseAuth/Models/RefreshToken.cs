@@ -47,6 +47,12 @@ public class RefreshToken
     public DateTime? AuthTime { get; set; }
 
     /// <summary>
+    /// Claims requested with the OIDC <c>claims</c> parameter (1.4.0+), carried across rotations so
+    /// refreshed access / ID tokens keep releasing them; serialized <see cref="Helpers.ClaimsRequest"/>.
+    /// </summary>
+    public string? ClaimsRequest { get; set; }
+
+    /// <summary>
     /// Stable, non-reversible identifier of a refresh token value: base64url(SHA-256(token)).
     /// Used to link rotations (<see cref="PreviousTokenId"/>) without storing secrets.
     /// </summary>

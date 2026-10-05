@@ -33,6 +33,15 @@ public sealed class ConformanceUserService : IUserAuthenticationService
         EmailVerified       = true,
         PhoneNumber         = "+1 555 0100",
         PhoneNumberVerified = true,
+        Address             = new UserAddress
+        {
+            Formatted     = "Calle 100 # 10-20\nBogotá D.C. 110111\nColombia",
+            StreetAddress = "Calle 100 # 10-20",
+            Locality      = "Bogotá D.C.",
+            Region        = "Cundinamarca",
+            PostalCode    = "110111",
+            Country       = "CO",
+        },
     };
 
     public Task<UserInfo?> ValidateCredentialsAsync(string username, string password, CancellationToken ct = default)

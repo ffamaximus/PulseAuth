@@ -50,6 +50,7 @@ public class InMemoryRefreshTokenStore : IRefreshTokenStore
                 Token = rt.Token, ClientId = rt.ClientId, SubjectId = rt.SubjectId, Scopes = rt.Scopes.ToArray(),
                 CreatedAt = rt.CreatedAt, ExpiresAt = rt.ExpiresAt, IsConsumed = rt.IsConsumed,
                 PreviousTokenId = rt.PreviousTokenId, UserStamp = rt.UserStamp, AuthTime = rt.AuthTime,
+                ClaimsRequest = rt.ClaimsRequest,
             });
         }
     }

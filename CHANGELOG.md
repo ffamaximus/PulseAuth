@@ -18,18 +18,28 @@
 ### OpenID Connect conformance (Basic OP pre-check)
 Fixes found while preparing the OpenID Foundation conformance suite (`oidcc-basic-certification-test-plan`):
 - ID tokens from the code flow carry **`auth_time`** (time of the user's sign-in), kept unchanged on refresh.
-- **Authorization code reuse** revokes the refresh tokens issued with that code (and their rotations)
-  and the user's reference access tokens for that client. JWT access tokens cannot be revoked and
-  expire normally (prefer reference tokens or short lifetimes where this matters).
+- **Authorization code reuse** revokes the access token issued with that code (its `jti` is derived
+  from the code), the refresh tokens issued with it (and their rotations) and the user's reference
+  access tokens for that client.
+- **JWT access token revocation**: `/connect/revocation` now also revokes JWT access tokens (by `jti`,
+  until they expire — `IRevokedTokenStore`). The deny-list is honoured by UserInfo and introspection;
+  APIs that validate JWTs locally do not see it (use reference tokens / introspection for that).
+- **Unsigned request objects** (`request` parameter, alg `none`, OIDC Core §6.1) with the new option
+  `AllowUnsignedRequestObjects` (default `false`): their parameters supersede the query ones;
+  signed objects or a mismatching `client_id` / `response_type` return `invalid_request_object`.
 - The authorize endpoint accepts **POST**; a missing `response_type` returns `invalid_request`;
   `request` / `request_uri` are rejected with `request_not_supported` / `request_uri_not_supported`;
   OpenID requests must always send `redirect_uri`.
 - UserInfo accepts **POST** and the token in the form body (`access_token`); errors carry a
   `WWW-Authenticate: Bearer error="invalid_token"` challenge.
 - Token responses send `Cache-Control: no-store` / `Pragma: no-cache`.
-- Discovery publishes `response_modes_supported`, `claims_parameter_supported`,
-  `request_parameter_supported` and `request_uri_parameter_supported` (`false`; the default when
-  omitted is `true`) and a fuller `claims_supported`.
+- Discovery publishes `response_modes_supported`, `request_parameter_supported` and
+  `request_uri_parameter_supported` (`false`; the default when omitted is `true`) and a fuller
+  `claims_supported`.
+- **`claims` request parameter** (OIDC Core §5.5): clients can ask for individual standard claims
+  for UserInfo and/or the ID token (`claims_parameter_supported: true`). Only claims of scopes the
+  client is allowed to use (and, with consent, requested) are released; the request is kept across
+  refresh token rotations.
 - `UserInfo` supports the remaining OIDC standard `profile` claims (`middle_name`, `nickname`,
   `profile`, `website`, `gender`, `birthdate`, `zoneinfo`, `locale`, `updated_at` as a number),
   returned by the UserInfo endpoint for the `profile` scope.
@@ -39,14 +49,17 @@ Fixes found while preparing the OpenID Foundation conformance suite (`oidcc-basi
 - **`acr` support**: the login sets the authentication level by adding an `acr` claim when signing
   in (or `DefaultAcr`); it is emitted in the ID token, and `AcrValuesSupported` is published as
   `acr_values_supported`.
+- **`address` scope / claim**: `UserInfo.Address` (`UserAddress`) is returned as a JSON object by
+  UserInfo (and in the ID token when `IncludeScopeClaimsInIdToken`). Add `"address"` to
+  `SupportedScopes` and the client's `AllowedScopes` to offer it.
 - New option `IgnoreUnknownScopes` (default `false`): unknown scopes are dropped instead of failing.
 - Consumed authorization codes are kept until they expire (needed to detect reuse).
 - New sample `samples/PulseAuth.ConformanceHost` + guide to run the suite.
 
 ### ⚠️ Database migration required (EF stores)
-New tables `PulseAuth_ReferenceTokens` and `PulseAuth_Consents`, new columns
-`PulseAuth_RefreshTokens.UserStamp`, `PulseAuth_RefreshTokens.AuthTime`,
-`PulseAuth_AuthorizationCodes.AuthTime`, `PulseAuth_AuthorizationCodes.Acr`, `PulseAuth_Clients.AccessTokenType` and
+New tables `PulseAuth_ReferenceTokens`, `PulseAuth_Consents` and `PulseAuth_RevokedTokens`, new columns
+`PulseAuth_RefreshTokens.UserStamp`, `PulseAuth_RefreshTokens.AuthTime`, `PulseAuth_RefreshTokens.ClaimsRequest`,
+`PulseAuth_AuthorizationCodes.AuthTime`, `PulseAuth_AuthorizationCodes.Acr`, `PulseAuth_AuthorizationCodes.ClaimsRequest`, `PulseAuth_Clients.AccessTokenType` and
 `PulseAuth_Clients.AllowIntrospection` (all nullable or with defaults; existing data keeps working):
 
 ```bash
@@ -55,9 +68,9 @@ dotnet ef database update --context <YourDbContext>
 ```
 
 ### API changes
-- `IPulseAuthDbContext` has two new `DbSet`s (`ReferenceTokens`, `Consents`); `PulseAuthDbContext` and
+- `IPulseAuthDbContext` has three new `DbSet`s (`ReferenceTokens`, `Consents`, `RevokedTokens`); `PulseAuthDbContext` and
   `PulseAuthIdentityDbContext<TUser>` already include them. Custom implementations must add them.
-- New abstractions: `IReferenceTokenStore`, `IConsentStore`, `IConsentInteractionService`,
+- New abstractions: `IReferenceTokenStore`, `IConsentStore`, `IRevokedTokenStore`, `IConsentInteractionService`,
   `AccessTokenValidator`. `IUserAuthenticationService.GetSecurityStampAsync` has a default
   implementation (feature off for custom user services until implemented).
 

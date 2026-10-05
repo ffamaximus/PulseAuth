@@ -68,6 +68,7 @@ public sealed class TokenCleanupService : BackgroundService
             var codes  = scope.ServiceProvider.GetService<IAuthorizationCodeStore>();
             var tokens = scope.ServiceProvider.GetService<IRefreshTokenStore>();
             var refs   = scope.ServiceProvider.GetService<IReferenceTokenStore>();
+            var revoked = scope.ServiceProvider.GetService<IRevokedTokenStore>();
 
             if (codes is not null)
                 await codes.RemoveExpiredAsync(ct);
@@ -75,6 +76,8 @@ public sealed class TokenCleanupService : BackgroundService
                 await tokens.RemoveExpiredAsync(ct);
             if (refs is not null)
                 await refs.RemoveExpiredAsync(ct);
+            if (revoked is not null)
+                await revoked.RemoveExpiredAsync(ct);
 
             _logger?.LogDebug("PulseAuth token cleanup completed");
         }

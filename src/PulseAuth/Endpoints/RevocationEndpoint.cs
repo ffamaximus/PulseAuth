@@ -24,6 +24,8 @@ internal static class RevocationEndpoint
         IClientStore             clients,
         IRefreshTokenStore       refreshTokenStore,
         IReferenceTokenStore     referenceTokenStore,
+        Services.AccessTokenValidator accessTokens,
+        IRevokedTokenStore       revokedTokens,
         CancellationToken        ct)
     {
         if (!ctx.Request.HasFormContentType)
@@ -59,6 +61,20 @@ internal static class RevocationEndpoint
         {
             await referenceTokenStore.RemoveAsync(token, ct);
             logger?.LogInformation("Reference access token revoked by client {ClientId} (subject {SubjectId})", client.ClientId, reference.SubjectId);
+            return Results.Ok();
+        }
+
+        // JWT access token: add its jti to the deny-list until it expires. Only effective where the list
+        // is consulted (UserInfo, introspection) — APIs validating JWTs locally do not see it.
+        if (token.Count(c => c == '.') == 2)
+        {
+            var jwt = await accessTokens.ValidateAsync(token, ct);
+            if (jwt.IsValid && jwt.Token is { } at && !string.IsNullOrEmpty(at.Id) &&
+                string.Equals(jwt.ClientId, client.ClientId, StringComparison.Ordinal))
+            {
+                await revokedTokens.RevokeAsync(at.Id, at.ValidTo, ct);
+                logger?.LogInformation("JWT access token revoked by client {ClientId} (subject {SubjectId})", client.ClientId, jwt.SubjectId);
+            }
             return Results.Ok();
         }
 

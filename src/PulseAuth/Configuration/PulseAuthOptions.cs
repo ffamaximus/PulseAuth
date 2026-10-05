@@ -184,4 +184,12 @@ public class PulseAuthOptions
     /// after MFA). <c>null</c> (default): no <c>acr</c> unless the login sets it.
     /// </summary>
     public string? DefaultAcr { get; set; }
+
+    /// <summary>
+    /// Accept unsigned request objects passed by value (<c>request</c> parameter with alg
+    /// <c>none</c>, OIDC Core §6.1); their claims supersede the query parameters. Default
+    /// <c>false</c>: the parameter is rejected with <c>request_not_supported</c>. Unsigned objects add
+    /// no security — enable only for interoperability with clients that send them.
+    /// </summary>
+    public bool AllowUnsignedRequestObjects { get; set; } = false;
 }

@@ -19,6 +19,7 @@ public sealed class FakeUserService(BlockedUsers blocked, SecurityStamps stamps)
         Locale    = "es-CO",
         ZoneInfo  = "America/Bogota",
         UpdatedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+        Address   = new UserAddress { Locality = "Bogotá", Country = "CO" },
         AdditionalClaims =
         [
             new Claim("sub", "mallory"),     // must never override the real subject

@@ -64,5 +64,8 @@ internal static class PulseAuthModelConfiguration
 
         builder.Entity<ConsentEntity>(e =>
             e.HasIndex(x => new { x.SubjectId, x.ClientId }).IsUnique());
+
+        builder.Entity<RevokedTokenEntity>(e =>
+            e.HasIndex(x => x.ExpiresAt));
     }
 }

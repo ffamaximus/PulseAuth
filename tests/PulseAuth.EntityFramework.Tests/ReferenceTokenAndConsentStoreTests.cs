@@ -49,6 +49,25 @@ public class ReferenceTokenAndConsentStoreTests
     }
 
     [Fact]
+    public async Task RevokedTokens_AreIdempotent_AndCleanedUpAfterExpiry()
+    {
+        using var db = new SqliteTestDatabase();
+        await using var ctx = db.CreateContext();
+        var store = new EfRevokedTokenStore(ctx);
+
+        Assert.False(await store.IsRevokedAsync("jti-1"));
+        await store.RevokeAsync("jti-1", DateTime.UtcNow.AddMinutes(10));
+        await store.RevokeAsync("jti-1", DateTime.UtcNow.AddMinutes(20));   // no duplicate-key error
+        await store.RevokeAsync("old", DateTime.UtcNow.AddMinutes(-1));
+
+        Assert.True(await store.IsRevokedAsync("jti-1"));
+        Assert.False(await store.IsRevokedAsync("old"));                      // expired entry = token expired anyway
+
+        await store.RemoveExpiredAsync();
+        Assert.Equal(1, await ctx.RevokedTokens.CountAsync());
+    }
+
+    [Fact]
     public async Task Consents_AreUpserted_OnePerUserAndClient()
     {
         using var db = new SqliteTestDatabase();
@@ -90,11 +109,13 @@ public class ReferenceTokenAndConsentStoreTests
             Token = "rt", ClientId = "spa", SubjectId = "alice", Scopes = ["openid"],
             ExpiresAt = DateTime.UtcNow.AddDays(1), UserStamp = "stamp-hash",
             AuthTime = new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc),
+            ClaimsRequest = """{"u":["name"],"i":["locale"]}""",
         });
 
         var found = (await store.FindByTokenAsync("rt"))!;
         Assert.Equal("stamp-hash", found.UserStamp);
         Assert.Equal(new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc), found.AuthTime);
+        Assert.Equal("""{"u":["name"],"i":["locale"]}""", found.ClaimsRequest);
     }
 
     [Fact]

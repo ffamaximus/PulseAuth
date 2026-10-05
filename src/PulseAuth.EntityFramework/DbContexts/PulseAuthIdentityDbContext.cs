@@ -89,6 +89,9 @@ public abstract class PulseAuthIdentityDbContext<TUser>
     /// <summary>User consents.</summary>
     public DbSet<ConsentEntity>             Consents             { get; set; } = default!;
 
+    /// <summary>Revoked JWT access tokens (by <c>jti</c>).</summary>
+    public DbSet<RevokedTokenEntity>        RevokedTokens        { get; set; } = default!;
+
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder builder)
     {

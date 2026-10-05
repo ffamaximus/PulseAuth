@@ -43,11 +43,14 @@ internal static class DiscoveryEndpoint
                                         .Concat(externalValidators.Select(v => v.SupportedGrantType))
                                         .Distinct()
                                         .ToArray(),
+            ClaimsParameterSupported = true,
+            RequestParameterSupported = options.AllowUnsignedRequestObjects,
+            RequestObjectSigningAlgValuesSupported = options.AllowUnsignedRequestObjects ? ["none"] : null,
             AcrValuesSupported    = options.AcrValuesSupported.Count > 0 ? options.AcrValuesSupported : null,
             ClaimsSupported       = ["sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "acr",
                                      "name", "given_name", "family_name", "middle_name", "nickname", "preferred_username",
                                      "profile", "picture", "website", "gender", "birthdate", "zoneinfo", "locale", "updated_at",
-                                     "email", "email_verified", "phone_number", "phone_number_verified"],
+                                     "email", "email_verified", "phone_number", "phone_number_verified", "address"],
         };
 
         return Results.Ok(doc);

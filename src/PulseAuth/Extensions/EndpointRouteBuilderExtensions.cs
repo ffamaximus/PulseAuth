@@ -66,8 +66,9 @@ public static class EndpointRouteBuilderExtensions
             IRefreshTokenStore refreshTokens,
             IReferenceTokenStore referenceTokens,
             IUserAuthenticationService users,
+            IRevokedTokenStore revokedTokens,
             CancellationToken ct) =>
-            TokenEndpoint.HandleAsync(ctx, opts, validator, tokenSvc, codes, refreshTokens, referenceTokens, users, ct))
+            TokenEndpoint.HandleAsync(ctx, opts, validator, tokenSvc, codes, refreshTokens, referenceTokens, users, revokedTokens, ct))
            .AllowAnonymous()
            .WithCors(app, options, $"{prefix}/token", isPublic: false)
            .WithRateLimit(options)
@@ -91,8 +92,10 @@ public static class EndpointRouteBuilderExtensions
             IClientStore clients,
             IRefreshTokenStore refreshTokens,
             IReferenceTokenStore referenceTokens,
+            AccessTokenValidator accessTokens,
+            IRevokedTokenStore revokedTokens,
             CancellationToken ct) =>
-            RevocationEndpoint.HandleAsync(ctx, clients, refreshTokens, referenceTokens, ct))
+            RevocationEndpoint.HandleAsync(ctx, clients, refreshTokens, referenceTokens, accessTokens, revokedTokens, ct))
            .AllowAnonymous()
            .WithCors(app, options, $"{prefix}/revocation", isPublic: false)
            .WithRateLimit(options)

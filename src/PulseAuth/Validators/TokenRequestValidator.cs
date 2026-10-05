@@ -64,6 +64,9 @@ public class TokenValidationResult
     /// <summary>Authentication context class of the sign-in (authorization code grant), if known.</summary>
     public string? Acr { get; private init; }
 
+    /// <summary>Serialized OIDC <c>claims</c> request carried by the code / refresh token, if any.</summary>
+    public string? ClaimsRequest { get; private init; }
+
     internal static TokenValidationResult SuccessRefresh(Client client, RefreshToken rt, bool reuseWithinGracePeriod)
         => new()
         {
@@ -71,6 +74,7 @@ public class TokenValidationResult
             Scopes = rt.Scopes.ToList().AsReadOnly(), RefreshTokenEntity = rt,
             IsRefreshTokenReuseWithinGracePeriod = reuseWithinGracePeriod,
             AuthTime = rt.AuthTime,
+            ClaimsRequest = rt.ClaimsRequest,
         };
 
     internal static TokenValidationResult SuccessCode(Client client, AuthorizationCode code)
@@ -78,7 +82,7 @@ public class TokenValidationResult
         {
             IsValid = true, Client = client, SubjectId = code.SubjectId,
             Scopes = code.Scopes.ToList().AsReadOnly(), Nonce = code.Nonce, AuthTime = code.AuthTime,
-            Acr = code.Acr,
+            Acr = code.Acr, ClaimsRequest = code.ClaimsRequest,
         };
 
     /// <summary>
@@ -119,6 +123,8 @@ public class TokenRequestValidator
     private readonly bool     _rotateRefreshTokens;
     private readonly ILogger? _logger;
     private readonly IReferenceTokenStore? _referenceTokens;
+    private readonly IRevokedTokenStore? _revokedTokens;
+    private readonly int _defaultAccessTokenLifetime;
     private readonly bool _validateStamp;
 
     /// <summary>
@@ -132,8 +138,11 @@ public class TokenRequestValidator
         IEnumerable<IExternalTokenValidator> externalValidators,
         IOptions<PulseAuthOptions>? options = null,
         ILogger<TokenRequestValidator>? logger = null,
-        IReferenceTokenStore? referenceTokens = null)
+        IReferenceTokenStore? referenceTokens = null,
+        IRevokedTokenStore? revokedTokens = null)
     {
+        _revokedTokens   = revokedTokens;
+        _defaultAccessTokenLifetime = options?.Value.DefaultAccessTokenLifetime ?? 3600;
         _logger          = logger;
         _referenceTokens = referenceTokens;
         _validateStamp   = options?.Value.ValidateSecurityStampOnRefresh ?? true;
@@ -228,7 +237,8 @@ public class TokenRequestValidator
         {
             // Code replay: the code was intercepted or the client is misbehaving. Revoke the
             // tokens issued with it (RFC 6749 §4.1.2) before rejecting the request.
-            await HandleCodeReuseAsync(_refreshTokens, _referenceTokens, authCode, client.ClientId, _logger, ct);
+            await HandleCodeReuseAsync(_refreshTokens, _referenceTokens, _revokedTokens, authCode, client.ClientId,
+                AccessTokenLifetime(client, _defaultAccessTokenLifetime), _logger, ct);
             return TokenValidationResult.Fail(OAuthErrors.InvalidGrant, "Authorization code has already been used");
         }
 
@@ -375,11 +385,18 @@ public class TokenRequestValidator
     internal static async Task HandleCodeReuseAsync(
         IRefreshTokenStore store,
         IReferenceTokenStore? referenceTokens,
+        IRevokedTokenStore? revokedTokens,
         AuthorizationCode code,
         string presentingClientId,
+        TimeSpan accessTokenLifetime,
         ILogger? logger,
         CancellationToken ct)
     {
+        // The JWT access token issued with this code carries jti = CodeTokenId(code), so it can be
+        // revoked here without having stored anything at exchange time.
+        if (revokedTokens is not null)
+            await revokedTokens.RevokeAsync(CodeTokenId(code.Code), DateTime.UtcNow + accessTokenLifetime, ct);
+
         var revoked = await store.RevokeFamilyAsync(new RefreshToken
         {
             Token     = code.Code,
@@ -390,16 +407,24 @@ public class TokenRequestValidator
         // Reference (opaque) access tokens are not linked to the code they came from, so all of this
         // user's reference tokens for the client are revoked: a replayed code means the code — and
         // possibly the tokens obtained with it — may be in an attacker's hands (RFC 6749 §4.1.2).
-        // JWT access tokens cannot be revoked and simply expire.
         if (referenceTokens is not null)
             await referenceTokens.RemoveBySubjectAsync(code.SubjectId, code.ClientId, ct);
 
         logger?.LogWarning(
             "Authorization code reuse detected (subject {SubjectId}, client {ClientId}, presented by client {PresentingClientId}). " +
-            "Revoked {RevokedCount} refresh token(s) issued with it and the user's reference access tokens for the client.",
+            "Revoked the access token and {RevokedCount} refresh token(s) issued with it, and the user's reference access tokens for the client.",
             code.SubjectId, code.ClientId, presentingClientId,
             revoked >= 0 ? revoked.ToString() : "all (subject + client)");
     }
+
+    /// <summary>
+    /// <c>jti</c> of the access token issued for an authorization code: a hash of the code (never the
+    /// code itself), so a replay of the code can revoke that token (RFC 6749 §4.1.2).
+    /// </summary>
+    internal static string CodeTokenId(string code) => "c." + RefreshToken.ComputeTokenId(code);
+
+    internal static TimeSpan AccessTokenLifetime(Client client, int defaultSeconds)
+        => TimeSpan.FromSeconds(client.AccessTokenLifetime > 0 ? client.AccessTokenLifetime : defaultSeconds);
 
     // ── Resource Owner Password (legacy) ─────────────────────────────────────
 

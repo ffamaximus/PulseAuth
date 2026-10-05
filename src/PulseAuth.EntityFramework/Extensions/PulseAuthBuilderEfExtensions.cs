@@ -133,6 +133,7 @@ public static class PulseAuthBuilderEfExtensions
         builder.Services.AddScoped<IRefreshTokenStore,      EfRefreshTokenStore>();
         builder.Services.AddScoped<IReferenceTokenStore,    EfReferenceTokenStore>();
         builder.Services.AddScoped<IConsentStore,           EfConsentStore>();
+        builder.Services.AddScoped<IRevokedTokenStore,      EfRevokedTokenStore>();
         builder.Services.AddMemoryCache(); // CORS origin cache (EfClientStore)
     }
 }

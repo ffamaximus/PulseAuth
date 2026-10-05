@@ -41,7 +41,7 @@ Client ConformanceClient(string id, string secret) => new()
     ClientSecretHash  = ClientSecretHelper.HashSecret(secret),
     AllowedGrantTypes = [GrantTypes.AuthorizationCode, GrantTypes.RefreshToken],
     RedirectUris      = [callback],
-    AllowedScopes     = ["openid", "profile", "email", "phone", "offline_access"],
+    AllowedScopes     = ["openid", "profile", "email", "address", "phone", "offline_access"],
     AllowOfflineAccess = true,
     RequirePkce       = false,   // the Basic OP plan does not send PKCE
 };
@@ -50,14 +50,15 @@ builder.Services
     .AddPulseAuth(o =>
     {
         o.Issuer          = issuer;
-        o.SupportedScopes = ["openid", "profile", "email", "phone", "offline_access"];
-        // "address" (and any other unknown scope) is ignored instead of failing the request,
-        // as OIDC Core §3.1.2.1 recommends; the suite requests it in some scope tests.
+        o.SupportedScopes = ["openid", "profile", "email", "address", "phone", "offline_access"];
+        // Unknown scopes are ignored instead of failing the request, as OIDC Core §3.1.2.1 recommends.
         o.IgnoreUnknownScopes = true;
         // profile / email / phone claims only from UserInfo (OIDC Core §5.4), not in the ID token.
         o.IncludeScopeClaimsInIdToken = false;
         // Single-factor login of the test user = ISO/IEC 29115 level "1" (set by the login below).
         o.AcrValuesSupported = ["1"];
+        // Basic OP plan: unsigned request objects by value (oidcc-unsigned-request-object-…).
+        o.AllowUnsignedRequestObjects = true;
     })
     .AddCookieAuthentication(o =>
     {

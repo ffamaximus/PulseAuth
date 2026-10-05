@@ -58,6 +58,9 @@ public class UserInfo
     /// <summary>When the profile was last updated (<c>updated_at</c>, emitted as seconds since epoch).</summary>
     public DateTimeOffset? UpdatedAt { get; set; }
 
+    /// <summary>Postal address (<c>address</c> claim, returned for the <c>address</c> scope).</summary>
+    public UserAddress? Address { get; set; }
+
     /// <summary>Phone number.</summary>
     public string? PhoneNumber { get; set; }
 

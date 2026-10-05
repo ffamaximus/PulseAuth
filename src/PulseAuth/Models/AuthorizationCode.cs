@@ -52,4 +52,10 @@ public class AuthorizationCode
     /// <c>acr</c> claim of the ID token. Null when unknown.
     /// </summary>
     public string? Acr { get; set; }
+
+    /// <summary>
+    /// Individual claims requested with the OIDC <c>claims</c> parameter (1.4.0+), already
+    /// restricted to what the client may receive; serialized <see cref="Helpers.ClaimsRequest"/>.
+    /// </summary>
+    public string? ClaimsRequest { get; set; }
 }

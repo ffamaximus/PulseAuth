@@ -72,13 +72,18 @@ public class DiscoveryDocument
     [JsonPropertyName("response_modes_supported")]
     public IEnumerable<string> ResponseModesSupported { get; set; } = ["query"];
 
-    /// <summary>The OIDC <c>claims</c> request parameter is not supported.</summary>
+    /// <summary>Whether the OIDC <c>claims</c> request parameter is supported (PulseAuth: true).</summary>
     [JsonPropertyName("claims_parameter_supported")]
     public bool ClaimsParameterSupported { get; set; }
 
-    /// <summary>Request objects by value are not supported (rejected with request_not_supported).</summary>
+    /// <summary>Whether request objects by value are accepted (<c>AllowUnsignedRequestObjects</c>).</summary>
     [JsonPropertyName("request_parameter_supported")]
     public bool RequestParameterSupported { get; set; }
+
+    /// <summary>Request object signing algorithms accepted (<c>["none"]</c> when request objects are enabled).</summary>
+    [JsonPropertyName("request_object_signing_alg_values_supported")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IEnumerable<string>? RequestObjectSigningAlgValuesSupported { get; set; }
 
     /// <summary>
     /// Request objects by reference are not supported. Must be published explicitly: when omitted,

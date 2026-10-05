@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using PulseAuth.Abstractions;
 using PulseAuth.Configuration;
 using PulseAuth.Constants;
+using PulseAuth.Helpers;
 using PulseAuth.Services;
 
 namespace PulseAuth.Endpoints;
@@ -75,35 +76,16 @@ internal static class UserInfoEndpoint
 
         var result = new Dictionary<string, object?> { ["sub"] = user.SubjectId };
 
-        if (scopes.Contains(StandardScopes.Profile))
-        {
-            AddIfNotNull(result, "name",               user.Name);
-            AddIfNotNull(result, "given_name",         user.GivenName);
-            AddIfNotNull(result, "family_name",        user.FamilyName);
-            AddIfNotNull(result, "picture",            user.Picture);
-            AddIfNotNull(result, "preferred_username", user.Username);
-            AddIfNotNull(result, "middle_name",        user.MiddleName);
-            AddIfNotNull(result, "nickname",           user.Nickname);
-            AddIfNotNull(result, "profile",            user.ProfileUrl);
-            AddIfNotNull(result, "website",            user.Website);
-            AddIfNotNull(result, "gender",             user.Gender);
-            AddIfNotNull(result, "birthdate",          user.Birthdate);
-            AddIfNotNull(result, "zoneinfo",           user.ZoneInfo);
-            AddIfNotNull(result, "locale",             user.Locale);
-            if (user.UpdatedAt is { } updatedAt)
-                result["updated_at"] = updatedAt.ToUnixTimeSeconds();   // JSON number (OIDC Core §5.1)
-        }
+        // Standard claims released by the granted scopes (OIDC Core §5.4) plus the ones requested
+        // individually with the "claims" parameter (§5.5; restricted to allowed scopes at /authorize).
+        var requested = (principal.FindFirst(DefaultTokenService.UserInfoClaimsClaimType)?.Value ?? "")
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var claimNames = scopes.SelectMany(StandardClaims.ForScope).Concat(requested).Distinct(StringComparer.Ordinal);
 
-        if (scopes.Contains(StandardScopes.Email))
+        foreach (var name in claimNames)
         {
-            AddIfNotNull(result, "email", user.Email);
-            result["email_verified"] = user.EmailVerified;
-        }
-
-        if (scopes.Contains(StandardScopes.Phone))
-        {
-            AddIfNotNull(result, "phone_number", user.PhoneNumber);
-            result["phone_number_verified"] = user.PhoneNumberVerified;
+            if (StandardClaims.GetValue(user, name) is { } value)
+                result[name] = value;   // strings, booleans, updated_at as a number, address as an object
         }
 
         // Additional application claims. Protocol / standard claims already in the response
@@ -134,11 +116,5 @@ internal static class UserInfoEndpoint
             return Results.Json(new { error, error_description = description }, statusCode: statusCode)
                           .ExecuteAsync(httpContext);
         }
-    }
-
-    private static void AddIfNotNull(Dictionary<string, object?> dict, string key, string? value)
-    {
-        if (!string.IsNullOrEmpty(value))
-            dict[key] = value;
     }
 }

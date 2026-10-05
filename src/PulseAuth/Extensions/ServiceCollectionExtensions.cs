@@ -47,6 +47,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IAuthorizationCodeStore, InMemoryAuthorizationCodeStore>();
         services.TryAddSingleton<IRefreshTokenStore,      InMemoryRefreshTokenStore>();
         services.TryAddSingleton<IReferenceTokenStore,    InMemoryReferenceTokenStore>();
+        services.TryAddSingleton<IRevokedTokenStore,      InMemoryRevokedTokenStore>();
         services.TryAddSingleton<IConsentStore,           InMemoryConsentStore>();
 
         // Access token validation (userinfo, introspection) and consent page API

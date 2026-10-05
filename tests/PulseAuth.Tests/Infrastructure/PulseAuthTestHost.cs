@@ -81,7 +81,7 @@ public sealed class PulseAuthTestHost : IAsyncDisposable
                     AllowedGrantTypes = [GrantTypes.AuthorizationCode, GrantTypes.RefreshToken, GrantTypes.Password],
                     RedirectUris = [SpaRedirectUri],
                     PostLogoutRedirectUris = [SpaLogoutUri],
-                    AllowedScopes = ["openid", "profile", "offline_access"],
+                    AllowedScopes = ["openid", "profile", "address", "offline_access"],
                     AllowOfflineAccess = true,
                     AllowedCorsOrigins = [SpaOrigin],
                 },

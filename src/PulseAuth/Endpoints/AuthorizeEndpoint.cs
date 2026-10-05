@@ -37,6 +37,15 @@ internal static class AuthorizeEndpoint
             ctx.Request.Query = new QueryCollection(form.ToDictionary(kv => kv.Key, kv => kv.Value));
         }
 
+        // Unsigned request object (OIDC Core §6.1): its parameters supersede the query ones. Errors are
+        // reported after the client and redirect_uri have been validated.
+        string? requestObjectError = null;
+        if (options.AllowUnsignedRequestObjects && ctx.Request.Query.ContainsKey("request"))
+        {
+            Helpers.RequestObject.TryMerge(ctx.Request.Query, out var merged, out requestObjectError);
+            ctx.Request.Query = merged;
+        }
+
         var q       = ctx.Request.Query;
 
         var clientId           = q["client_id"].ToString();
@@ -63,7 +72,19 @@ internal static class AuthorizeEndpoint
         var client           = validation.Client!;
         var trustedRedirect  = validation.ValidatedRedirectUri!;
 
-        // Request objects (JAR) are not supported: reject explicitly instead of silently ignoring
+        // OIDC Core §5.5 "claims" parameter: individual standard claims for UserInfo / the ID token.
+        // Restricted to scopes the client may use (and, with consent, has requested) so it can never
+        // release data the client could not obtain through a scope.
+        if (!Helpers.ClaimsRequest.TryParse(q["claims"].ToString(), out var claimsRequest))
+            return BuildErrorResponse(trustedRedirect, state, Constants.OAuthErrors.InvalidRequest, "claims must be a JSON object");
+        claimsRequest = claimsRequest.Restrict(scope =>
+            client.AllowedScopes.Contains(scope) &&
+            (!client.RequireConsent || validation.RequestedScopes.Contains(scope)));
+
+        if (requestObjectError is not null)
+            return BuildErrorResponse(trustedRedirect, state, "invalid_request_object", requestObjectError);
+
+        // Request objects not enabled / by reference: reject explicitly instead of silently ignoring
         // parameters that may carry security-relevant values (OIDC Core §6).
         if (q.ContainsKey("request"))
             return BuildErrorResponse(trustedRedirect, state, "request_not_supported", "The request parameter is not supported");
@@ -143,6 +164,7 @@ internal static class AuthorizeEndpoint
             // The login decides the authentication level by adding an "acr" claim when signing in
             // (acr_values is only a preference of the client, OIDC Core §3.1.2.1).
             Acr                 = authResult.Principal.FindFirst("acr")?.Value ?? options.DefaultAcr,
+            ClaimsRequest       = claimsRequest.Serialize(),
             CreatedAt           = DateTime.UtcNow,
             ExpiresAt           = DateTime.UtcNow.AddSeconds(client.AuthorizationCodeLifetime),
         };

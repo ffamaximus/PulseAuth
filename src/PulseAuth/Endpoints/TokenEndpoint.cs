@@ -26,6 +26,7 @@ internal static class TokenEndpoint
         IRefreshTokenStore         refreshTokenStore,
         IReferenceTokenStore       referenceTokenStore,
         IUserAuthenticationService users,
+        IRevokedTokenStore         revokedTokens,
         CancellationToken          ct)
     {
         var options = optionsAccessor.Value;
@@ -96,8 +97,11 @@ internal static class TokenEndpoint
                 await TokenRequestValidator.HandleCodeReuseAsync(
                     refreshTokenStore,
                     referenceTokenStore,
+                    revokedTokens,
                     new AuthorizationCode { Code = code, ClientId = client.ClientId, SubjectId = subject },
-                    client.ClientId, Logger(ctx), ct);
+                    client.ClientId,
+                    TokenRequestValidator.AccessTokenLifetime(client, options.DefaultAccessTokenLifetime),
+                    Logger(ctx), ct);
                 return InvalidGrant("Authorization code has already been used");
             }
         }
@@ -144,6 +148,25 @@ internal static class TokenEndpoint
                 .ToList();
         }
 
+        // Access tokens from a code exchange get a jti derived from the code, so that a replay of the
+        // code can revoke them (see TokenRequestValidator.HandleCodeReuseAsync).
+        if (grantType == GrantTypes.AuthorizationCode)
+        {
+            accessTokenClaims ??= [];
+            accessTokenClaims.Add(new(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti,
+                                      TokenRequestValidator.CodeTokenId(code)));
+        }
+
+        // Claims requested with the OIDC "claims" parameter travel in the access token so that the
+        // UserInfo endpoint can release them (they were restricted to allowed scopes at /authorize).
+        var claimsRequest = Helpers.ClaimsRequest.Deserialize(validation.ClaimsRequest);
+        if (claimsRequest.UserInfo.Count > 0)
+        {
+            accessTokenClaims ??= [];
+            accessTokenClaims.Add(new(Services.DefaultTokenService.UserInfoClaimsClaimType,
+                                      string.Join(' ', claimsRequest.UserInfo)));
+        }
+
         var accessToken = await tokenService.CreateAccessTokenAsync(subject, client.ClientId, scopes, accessTokenClaims, ct);
         var accessTokenLifetime = client.AccessTokenLifetime > 0
             ? client.AccessTokenLifetime
@@ -187,6 +210,20 @@ internal static class TokenEndpoint
             if (!string.IsNullOrEmpty(validation.Acr))
                 idTokenClaims.Add(new(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Acr, validation.Acr));
 
+            // Standard claims requested for the ID token with the "claims" parameter (skipping the
+            // ones the token service already adds for the granted scopes).
+            if (claimsRequest.IdToken.Count > 0 && await users.GetUserByIdAsync(subject, ct) is { } user)
+            {
+                var alreadyIncluded = options.IncludeScopeClaimsInIdToken
+                    ? Services.DefaultTokenService.ScopeClaimTypesInIdToken(scopes)
+                    : new HashSet<string>();
+                foreach (var name in claimsRequest.IdToken.Where(n => !alreadyIncluded.Contains(n)))
+                {
+                    if (Helpers.StandardClaims.GetValue(user, name) is { } value)
+                        idTokenClaims.Add(Helpers.StandardClaims.ToJwtClaim(name, value));
+                }
+            }
+
             idToken = await tokenService.CreateIdTokenAsync(
                 subject, client.ClientId, validation.Nonce, scopes, idTokenClaims, ct);
         }
@@ -227,6 +264,7 @@ internal static class TokenEndpoint
                                     : grantType == GrantTypes.AuthorizationCode ? RefreshToken.ComputeTokenId(code)
                                     : null,
                     AuthTime  = authTime,
+                    ClaimsRequest = validation.ClaimsRequest,
                     UserStamp = stamp is null ? null : RefreshToken.ComputeTokenId(stamp),
                     CreatedAt = DateTime.UtcNow,
                     ExpiresAt = DateTime.UtcNow.AddSeconds(
