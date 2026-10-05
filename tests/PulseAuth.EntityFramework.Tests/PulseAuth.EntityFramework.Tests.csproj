@@ -12,6 +12,9 @@
   <ItemGroup>
     <!-- Same EF Core major as the net8.0 build of PulseAuth.EntityFramework -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.10" />
+    <!-- EF Core Sqlite 8.0.x pulls SQLitePCLRaw 2.1.6, which bundles SQLite < 3.50.2
+         (CVE-2025-6965 / GHSA-2m69-gcr7-jv3q). Pin the patched native bundle. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
